@@ -19,7 +19,7 @@ func TestCleanRelative(t *testing.T) {
 		{"/photos//summer", "photos/summer", true},
 		{"../secret", "", false},
 		{"photos/../../secret", "", false},
-		{"bad\..\secret", "", false},
+		{`bad\..\secret`, "", false},
 	}
 	for _, test := range tests {
 		got, err := cleanRelative(test.input)

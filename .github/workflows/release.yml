@@ -22,8 +22,8 @@ jobs:
             goarm: "7"
             suffix: armv7
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: false
@@ -38,7 +38,7 @@ jobs:
         run: |
           go build -trimpath -ldflags="-s -w" -o litenest .
           tar -czf "litenest-linux-${{ matrix.suffix }}.tar.gz" litenest LICENSE README.md
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: litenest-linux-${{ matrix.suffix }}
           path: litenest-linux-${{ matrix.suffix }}.tar.gz
@@ -48,7 +48,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           pattern: litenest-linux-*
           merge-multiple: true
