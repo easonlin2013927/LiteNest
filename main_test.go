@@ -63,3 +63,16 @@ func TestStoreCreatesDefaultAdmin(t *testing.T) {
 		t.Fatalf("config permissions are too broad: %v", info.Mode().Perm())
 	}
 }
+
+func TestAuditActivityIsFilteredByUser(t *testing.T) {
+ app := &App{dataDir:t.TempDir()}
+ app.audit("activity","alice","上傳檔案","photos/a.jpg")
+ app.audit("activity","bob","下載檔案","private.txt")
+ own,err := app.readLogs("activity","alice",false)
+ if err!=nil { t.Fatal(err) }
+ if len(own)!=1 || own[0].Actor!="alice" || own[0].Detail!="photos/a.jpg" {
+  t.Fatalf("activity log leaked another user's entries: %+v",own)
+ }
+ all,err := app.readLogs("activity","",true)
+ if err!=nil || len(all)!=2 { t.Fatalf("expected both entries for admin: %+v, %v",all,err) }
+}
