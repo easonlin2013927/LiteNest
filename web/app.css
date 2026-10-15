@@ -27,3 +27,22 @@ dialog{border:1px solid var(--glass-line);border-radius:24px;background:linear-g
 @supports not (backdrop-filter:blur(2px)){.login-card,.sidebar,.file-surface,.user-table,dialog{background:#f8faf7}}
 @media(max-width:560px){.login-card{padding:30px 24px;border-radius:22px}.file-surface,.user-table{backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important}}
+
+/* Glass strength is shared by the sign-in, file and settings surfaces. */
+:root{--glass-opacity:.70;--glass-blur:20px;--glass-shadow-strength:.7}
+.login-card,.file-surface,.user-table,.settings-card,dialog{background:rgba(255,255,255,var(--glass-opacity));backdrop-filter:blur(var(--glass-blur)) saturate(145%);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(145%);box-shadow:0 18px 45px rgba(23,61,43,calc(var(--glass-shadow-strength)*.13)),inset 0 1px 0 rgba(255,255,255,.9)}
+.sidebar{backdrop-filter:blur(var(--glass-blur)) saturate(135%);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(135%)}
+.settings-card{border:1px solid var(--glass-line);border-radius:20px;padding:25px;margin-bottom:24px}
+.settings-card .section-toolbar{margin-bottom:10px}
+.settings-card form{max-width:700px}
+.slider-label{display:grid;gap:11px;font-size:13px;font-weight:750;margin:18px 0}
+.slider-label output{justify-self:end;color:var(--green-2)}
+input[type=range]{padding:0;accent-color:var(--green-2);box-shadow:none}
+.setting-toggle{display:flex;gap:10px;align-items:center;font-size:13px;font-weight:700;margin:20px 0}
+.setting-toggle input{width:auto}
+.log-list{display:grid}
+.log-row{display:grid;grid-template-columns:150px 100px minmax(110px,1fr) minmax(120px,1.5fr);gap:12px;align-items:center;padding:13px 0;border-top:1px solid var(--line);font-size:13px}
+.log-row time,.log-row small{color:var(--muted)}
+.log-row small{overflow-wrap:anywhere}
+#globalView>.section-toolbar{margin-top:34px}
+@media(max-width:650px){.settings-card{padding:18px}.log-row{grid-template-columns:1fr auto;gap:4px}.log-row span,.log-row small{grid-column:1/-1}}

@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { me: null, path: '', items: [], users: [] };
+const state = { me: null, path: '', items: [], users: [], global: null };
 let toastTimer;
 
 async function api(url, options = {}) {
@@ -38,10 +38,17 @@ async function bootstrap() {
 }
 function applyProfile() {
   const me = state.me; $('#profileName').textContent = me.username; $('#profileRole').textContent = me.admin ? '管理者' : '使用者'; $('#avatar').textContent = me.username[0].toUpperCase();
-  $('#usersNav').classList.toggle('hidden', !me.admin); $('#warningBanner').classList.toggle('hidden', !me.must_change_password);
+  $('#globalNav').classList.toggle('hidden', !me.admin); $('#warningBanner').classList.toggle('hidden', !me.must_change_password);
+  applyGlass(me.glass_level ?? me.default_glass_level ?? 70);
   const quota = me.quota_bytes; $('#storageText').textContent = quota ? `${formatBytes(me.used_bytes)} / ${formatBytes(quota)}` : `${formatBytes(me.used_bytes)} / 不限`;
   $('#storageBar').style.width = quota ? `${Math.min(100, me.used_bytes / quota * 100)}%` : '8%';
   const canWrite = me.admin || me.permissions.write; $('#newFolderButton').classList.toggle('hidden', !canWrite); $('#uploadLabel').classList.toggle('hidden', !canWrite);
+}
+function applyGlass(level) {
+  const amount = Math.max(0, Math.min(100, Number(level)));
+  document.documentElement.style.setProperty('--glass-opacity', (0.96 - amount * .0038).toFixed(2));
+  document.documentElement.style.setProperty('--glass-blur', `${Math.round(amount * .28)}px`);
+  document.documentElement.style.setProperty('--glass-shadow-strength', (amount / 100).toFixed(2));
 }
 
 $('#loginForm').addEventListener('submit', async event => {
@@ -92,16 +99,72 @@ function openPassword(){ $('#currentPassword').value='';$('#newPassword').value=
 $('#changePasswordButton').addEventListener('click',openPassword);$('#warningAction').addEventListener('click',openPassword);
 $('#passwordForm').addEventListener('submit',async event=>{event.preventDefault();try{await api('/api/password',{method:'POST',body:{current_password:$('#currentPassword').value,new_password:$('#newPassword').value}});$('#passwordDialog').close();state.me.must_change_password=false;applyProfile();showToast('密碼已更新');}catch(error){$('#passwordError').textContent=error.message;}});
 
-document.querySelectorAll('.nav-item').forEach(button=>button.addEventListener('click',async()=>{document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));button.classList.add('active');const users=button.dataset.view==='users';$('#filesView').classList.toggle('hidden',users);$('#usersView').classList.toggle('hidden',!users);$('#pageTitle').textContent=users?'系統設定':'我的檔案';$('.top-actions').classList.toggle('hidden',users);$('.sidebar').classList.remove('open');if(users)await loadUsers();}));
+document.querySelectorAll('.nav-item').forEach(button=>button.addEventListener('click',async()=>{await showView(button.dataset.view);}));
+async function showView(view){
+  document.querySelectorAll('.nav-item').forEach(button=>button.classList.toggle('active',button.dataset.view===view));
+  $('#filesView').classList.toggle('hidden',view!=='files');
+  $('#globalView').classList.toggle('hidden',view!=='global');
+  $('#personalView').classList.toggle('hidden',view!=='personal');
+  $('#pageTitle').textContent=({files:'我的檔案',global:'全域設定',personal:'個人設定'})[view];
+  $('.top-actions').classList.toggle('hidden',view!=='files');
+  $('.sidebar').classList.remove('open');
+  if(view==='global') await loadGlobalView();
+  if(view==='personal') await loadPersonalView();
+}
 $('#menuButton').addEventListener('click',()=>$('.sidebar').classList.toggle('open'));
 
 async function loadUsers(){try{state.users=await api('/api/users');renderUsers();}catch(error){showToast(error.message)}}
+async function loadGlobalView(){
+  try{
+    state.global=await api('/api/settings/global');
+    $('#defaultQuota').value=state.global.default_quota_bytes/1073741824;
+    $('#defaultGlass').value=state.global.default_glass_level;
+    $('#defaultRead').checked=state.global.default_permissions.read;
+    $('#defaultWrite').checked=state.global.default_permissions.write;
+    $('#defaultDelete').checked=state.global.default_permissions.delete;
+    $('#defaultGlassValue').value=`${state.global.default_glass_level}%`;
+    await Promise.all([loadUsers(),loadLogs('global'),loadLogs('all-activity')]);
+  }catch(error){showToast(error.message)}
+}
+async function loadPersonalView(){
+  const me=state.me;
+  $('#useGlobalGlass').checked=me.glass_level==null;
+  $('#personalGlass').value=me.glass_level??me.default_glass_level??70;
+  $('#personalGlass').disabled=$('#useGlobalGlass').checked;
+  $('#personalGlassValue').value=`${$('#personalGlass').value}%`;
+  await loadLogs('activity');
+}
+async function loadLogs(kind){
+  try{
+    const rows=await api(kind==='all-activity'?'/api/logs/activity?scope=all':`/api/logs/${kind}`);
+    const target=kind==='global'?'#globalLog':kind==='all-activity'?'#allActivityLog':'#activityLog';
+    $(target).innerHTML=rows.length?rows.map(row=>`<div class="log-row"><time>${formatDate(row.time)}</time><strong>${escapeHtml(row.actor)}</strong><span>${escapeHtml(row.action)}</span><small>${escapeHtml(row.detail||'')}</small></div>`).join(''):'<p class="muted">目前沒有紀錄。</p>';
+  }catch(error){showToast(error.message)}
+}
+$('#defaultGlass').addEventListener('input',event=>{$('#defaultGlassValue').value=`${event.target.value}%`});
+$('#globalForm').addEventListener('submit',async event=>{
+  event.preventDefault();
+  try{
+    state.global=await api('/api/settings/global',{method:'PATCH',body:{default_permissions:{read:$('#defaultRead').checked,write:$('#defaultWrite').checked,delete:$('#defaultDelete').checked},default_quota_bytes:Math.round(Number($('#defaultQuota').value)*1073741824),default_glass_level:Number($('#defaultGlass').value)}});
+    state.me=await api('/api/me');applyProfile();await loadLogs('global');showToast('全域設定已儲存');
+  }catch(error){showToast(error.message)}
+});
+$('#useGlobalGlass').addEventListener('change',event=>{$('#personalGlass').disabled=event.target.checked;applyGlass(event.target.checked?(state.me.default_glass_level??70):$('#personalGlass').value)});
+$('#personalGlass').addEventListener('input',event=>{$('#personalGlassValue').value=`${event.target.value}%`;applyGlass(event.target.value)});
+$('#personalForm').addEventListener('submit',async event=>{
+  event.preventDefault();
+  try{await api('/api/settings/me',{method:'PATCH',body:{use_global:$('#useGlobalGlass').checked,glass_level:Number($('#personalGlass').value)}});state.me=await api('/api/me');applyProfile();await loadLogs('activity');showToast('個人設定已儲存')}
+  catch(error){showToast(error.message)}
+});
 function permissionBadges(user){if(user.admin)return '<span class="badge admin">管理者</span>';const out=[];if(user.permissions.read)out.push('<span class="badge">讀取</span>');if(user.permissions.write)out.push('<span class="badge">寫入</span>');if(user.permissions.delete)out.push('<span class="badge">刪除</span>');return out.join('')||'<span class="file-meta">無權限</span>'}
 function renderUsers(){$('#userList').innerHTML=state.users.map(user=>{const quota=user.quota_bytes?formatBytes(user.quota_bytes):'不限';const canDelete=user.username!==state.me.username?`<button class="delete-user" data-delete-user="${escapeHtml(user.username)}" title="刪除">×</button>`:'';return `<div class="user-row"><div class="user-identity"><span class="avatar">${user.username[0].toUpperCase()}</span><span><strong>${escapeHtml(user.username)}</strong><small>${user.admin?'系統管理者':'一般使用者'}</small></span></div><div class="badges">${permissionBadges(user)}</div><div class="file-meta">${formatBytes(user.used_bytes)} / ${quota}</div><div class="user-actions"><button data-edit-user="${escapeHtml(user.username)}" title="編輯">✎</button>${canDelete}</div></div>`}).join('');document.querySelectorAll('[data-edit-user]').forEach(button=>button.addEventListener('click',()=>openUserDialog(state.users.find(user=>user.username===button.dataset.editUser))));document.querySelectorAll('[data-delete-user]').forEach(button=>button.addEventListener('click',()=>deleteUser(button.dataset.deleteUser)));}
 $('#addUserButton').addEventListener('click',()=>openUserDialog());
-function openUserDialog(user=null){$('#userForm').reset();$('#userError').textContent='';$('#editingUsername').value=user?.username||'';$('#userDialogTitle').textContent=user?'編輯使用者':'新增使用者';$('#userUsername').disabled=!!user;$('#userUsername').value=user?.username||'';$('#userPassword').required=!user;$('#userQuota').value=user?.quota_bytes?(user.quota_bytes/1073741824).toFixed(1):0;$('#userAdmin').checked=user?.admin||false;$('#permRead').checked=user?.permissions.read??true;$('#permWrite').checked=user?.permissions.write??true;$('#permDelete').checked=user?.permissions.delete??false;$('#userDialog').showModal();}
+function openUserDialog(user=null){$('#userForm').reset();$('#userError').textContent='';$('#editingUsername').value=user?.username||'';$('#userDialogTitle').textContent=user?'編輯使用者':'新增使用者';$('#userUsername').disabled=!!user;$('#userUsername').value=user?.username||'';$('#userPassword').required=!user;const defaults=state.global||{default_permissions:{read:true,write:true,delete:false},default_quota_bytes:0,default_glass_level:70};$('#userQuota').value=(user?.quota_bytes??defaults.default_quota_bytes)/1073741824;$('#userAdmin').checked=user?.admin||false;$('#permRead').checked=user?.permissions.read??defaults.default_permissions.read;$('#permWrite').checked=user?.permissions.write??defaults.default_permissions.write;$('#permDelete').checked=user?.permissions.delete??defaults.default_permissions.delete;$('#userUseGlobalGlass').checked=user?.glass_level==null;$('#userGlass').value=user?.glass_level??defaults.default_glass_level;$('#userGlass').disabled=$('#userUseGlobalGlass').checked;$('#userGlassValue').value=`${$('#userGlass').value}%`;$('#userDialog').showModal();}
 $('#userAdmin').addEventListener('change',event=>{document.querySelectorAll('#userForm fieldset input').forEach(input=>{input.disabled=event.target.checked;if(event.target.checked)input.checked=true})});
-$('#userForm').addEventListener('submit',async event=>{event.preventDefault();const editing=$('#editingUsername').value;const body={password:$('#userPassword').value,admin:$('#userAdmin').checked,permissions:{read:$('#permRead').checked,write:$('#permWrite').checked,delete:$('#permDelete').checked},quota_bytes:Math.round(Number($('#userQuota').value)*1073741824)};if(!editing)body.username=$('#userUsername').value.trim();try{await api(editing?`/api/users/${encodeURIComponent(editing)}`:'/api/users',{method:editing?'PATCH':'POST',body});$('#userDialog').close();showToast(editing?'使用者已更新':'使用者已建立');await loadUsers();}catch(error){$('#userError').textContent=error.message;}});
+$('#userUseGlobalGlass').addEventListener('change',event=>{$('#userGlass').disabled=event.target.checked});
+$('#userGlass').addEventListener('input',event=>{$('#userGlassValue').value=`${event.target.value}%`});
+document.querySelectorAll('[data-close-dialog]').forEach(button=>button.addEventListener('click',()=>button.closest('dialog').close()));
+$('#userForm').addEventListener('submit',async event=>{event.preventDefault();const editing=$('#editingUsername').value;const body={password:$('#userPassword').value,admin:$('#userAdmin').checked,permissions:{read:$('#permRead').checked,write:$('#permWrite').checked,delete:$('#permDelete').checked},quota_bytes:Math.round(Number($('#userQuota').value)*1073741824)};if(!editing)body.username=$('#userUsername').value.trim();if($('#userUseGlobalGlass').checked){if(editing)body.use_global_glass=true;}else{body.glass_level=Number($('#userGlass').value);}try{await api(editing?`/api/users/${encodeURIComponent(editing)}`:'/api/users',{method:editing?'PATCH':'POST',body});$('#userDialog').close();showToast(editing?'使用者已更新':'使用者已建立');await loadUsers();await loadLogs('global');}catch(error){$('#userError').textContent=error.message;}});
 async function deleteUser(username){if(!confirm(`確定刪除使用者「${username}」？檔案會移到伺服器的回收資料夾。`))return;try{await api(`/api/users/${encodeURIComponent(username)}`,{method:'DELETE'});showToast('使用者已刪除，檔案已保留於回收資料夾');await loadUsers();}catch(error){showToast(error.message)}}
 
 bootstrap();
