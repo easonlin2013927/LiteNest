@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v6
         with:
-          pattern: litenest-linux-*
+          pattern: litenest-*
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
