@@ -88,6 +88,12 @@ go vet ./...
 go run . -data ./data
 ```
 
+若本機尚未安裝 Go，可先啟動 UI 測試伺服器：
+
+```sh
+node scripts/preview.mjs
+```
+
 目前版本聚焦可靠的 NAS 核心。檔案分享連結、縮圖、WebDAV、版本歷史與相簿等功能可在後續版本逐步加入。
 
 ## 授權
