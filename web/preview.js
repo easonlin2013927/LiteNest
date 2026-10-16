@@ -10,6 +10,7 @@ const LiteNestPreview = (() => {
   const video = new Set(['mp4','webm','mov','m4v']);
   const code = new Set(['py','cmd','bat','ps1','js','mjs','cjs','json','css','html','htm','xml','svg','go','sh','bash','sql','yml','yaml','toml','ini','conf','log','txt','ts','tsx','jsx','rs','c','h','cpp','java','rb','php']);
   let loadId = 0;
+  let convertedURL = null;
 
   function kind(name) {
     const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
@@ -19,6 +20,8 @@ const LiteNestPreview = (() => {
     if (ext === 'pdf') return 'pdf';
     if (ext === 'md' || ext === 'markdown') return 'markdown';
     if (['csv','tsv','xlsx','ods'].includes(ext)) return 'sheet';
+    if (['docx','odt','pptx','odp'].includes(ext)) return 'office';
+    if (['doc','ppt','xls'].includes(ext)) return 'legacy';
     if (code.has(ext)) return 'code';
     return 'unknown';
   }
@@ -98,7 +101,7 @@ const LiteNestPreview = (() => {
       const method=view.getUint16(pos+10,true),compressed=view.getUint32(pos+20,true),size=view.getUint32(pos+24,true);
       const nameLen=view.getUint16(pos+28,true),extraLen=view.getUint16(pos+30,true),commentLen=view.getUint16(pos+32,true),offset=view.getUint32(pos+42,true);
       const name=new TextDecoder().decode(bytes.subarray(pos+46,pos+46+nameLen));
-      if(name==='xl/sharedStrings.xml'||name==='xl/workbook.xml'||name==='content.xml'||/^xl\/worksheets\/sheet\d+\.xml$/.test(name))result.set(name,{method,compressed,size,offset});
+      if(name==='xl/sharedStrings.xml'||name==='xl/workbook.xml'||name==='content.xml'||name==='word/document.xml'||/^ppt\/slides\/slide\d+\.xml$/.test(name)||/^xl\/worksheets\/sheet\d+\.xml$/.test(name))result.set(name,{method,compressed,size,offset});
       pos+=46+nameLen+extraLen+commentLen;
     }
     return {bytes,view,entries:result};
@@ -161,19 +164,78 @@ const LiteNestPreview = (() => {
     const buffer=await response.arrayBuffer();if(buffer.byteLength>maxBytes)throw new Error('檔案太大，請下載後開啟');
     return new TextDecoder().decode(buffer);
   }
+  async function loadBuffer(url,maxBytes=12e6) {
+    const response=await fetch(url,{credentials:'same-origin'});
+    if(!response.ok)throw new Error('無法讀取檔案');
+    if(Number(response.headers.get('Content-Length'))>maxBytes)throw new Error('檔案太大，請下載檢視');
+    const buffer=await response.arrayBuffer();
+    if(buffer.byteLength>maxBytes)throw new Error('檔案太大，請下載檢視');
+    return buffer;
+  }
+  function renderOffice(pages,presentation=false) {
+    const wrap=document.createElement('div');wrap.className='office-view';
+    const note=document.createElement('p');note.className='office-note';note.textContent='輕量唯讀檢視：文字與頁面順序可供瀏覽，複雜排版、動畫與嵌入物件可能不同於原檔。';wrap.append(note);
+    for(const [index,lines] of pages.entries()){
+      const page=document.createElement('section');page.className=presentation?'office-slide':'office-page';
+      if(presentation){const heading=document.createElement('h2');heading.textContent=lines[0]||`投影片 ${index+1}`;page.append(heading);}
+      for(const [lineIndex,line] of lines.entries()){
+        if(presentation&&lineIndex===0)continue;
+        const p=document.createElement('p');p.textContent=line;page.append(p);
+      }
+      wrap.append(page);
+    }
+    body.replaceChildren(wrap);
+  }
+  async function officePages(buffer,ext) {
+    const zip=zipEntries(buffer),presentation=ext==='pptx'||ext==='odp';
+    const paths=ext==='docx'?['word/document.xml']:ext==='pptx'?[...zip.entries.keys()].filter(name=>/^ppt\/slides\/slide\d+\.xml$/.test(name)).sort((a,b)=>Number(a.match(/\d+/g).at(-1))-Number(b.match(/\d+/g).at(-1))).slice(0,80):['content.xml'];
+    const pages=[];
+    for(const path of paths){
+      const source=await readZipText(zip,path);if(!source)continue;
+      const documentXml=xml(source);
+      if(ext==='pptx'){
+        pages.push([...documentXml.getElementsByTagNameNS('*','p')].map(node=>node.textContent.trim()).filter(Boolean).slice(0,100));
+      }else if(ext==='odp'){
+        const slideNodes=[...documentXml.getElementsByTagNameNS('*','page')].filter(node=>node.localName==='page').slice(0,80);
+        for(const slide of slideNodes)pages.push([...slide.getElementsByTagNameNS('*','p')].map(node=>node.textContent.trim()).filter(Boolean).slice(0,100));
+      }else{
+        pages.push([...documentXml.getElementsByTagNameNS('*','p')].map(node=>node.textContent.trim()).filter(Boolean).slice(0,2000));
+      }
+    }
+    if(!pages.length)throw new Error('這份文件沒有可顯示的文字內容');
+    return {pages,presentation};
+  }
+  async function renderBinary(url,name,id){
+    const response=await fetch(url,{credentials:'same-origin',headers:{Range:'bytes=0-4095'}});
+    if(!response.ok)throw new Error('無法讀取檔案');
+    const bytes=new Uint8Array(await response.arrayBuffer()).slice(0,4096);
+    const wrap=document.createElement('div');wrap.className='binary-view';
+    const heading=document.createElement('h2');heading.className='binary-heading';heading.textContent=`${name} · 檔案內容檢視`;
+    const note=document.createElement('p');note.className='office-note';note.textContent='此格式目前無法在瀏覽器完整呈現。以下是檔案開頭的唯讀位元組內容；需要原始格式時請下載。';
+    const grid=document.createElement('div');grid.className='binary-grid';const pre=document.createElement('pre');
+    const lines=[];for(let i=0;i<bytes.length;i+=16){const chunk=bytes.slice(i,i+16);lines.push(`${i.toString(16).padStart(8,'0')}  ${[...chunk].map(n=>n.toString(16).padStart(2,'0')).join(' ').padEnd(47)}  ${[...chunk].map(n=>n>=32&&n<127?String.fromCharCode(n):'.').join('')}`);}
+    pre.textContent=lines.join('\n')||'(空檔案)';grid.append(pre);wrap.append(heading,note,grid);if(id===loadId)body.replaceChildren(wrap);
+  }
   async function open(item) {
     const id=++loadId,ext=item.name.split('.').pop().toLowerCase(),type=kind(item.name);
+    if(convertedURL){URL.revokeObjectURL(convertedURL);convertedURL=null;}
     const url=`/api/preview?path=${encodeURIComponent(item.path)}`;
     title.textContent=item.name;meta.textContent=`${type==='unknown'?'無法站內預覽':'唯讀預覽'} · ${item.size?`${(item.size/1024).toFixed(1)} KB`:'空白檔案'}`;
     download.href=`/api/download?path=${encodeURIComponent(item.path)}`;download.setAttribute('download',item.name);
+    body.classList.toggle('image-stage',type==='image');
     message('正在開啟預覽…');dialog.showModal();
     try {
       if(type==='image'||type==='audio'||type==='video'||type==='pdf'){
         const element=document.createElement(({image:'img',audio:'audio',video:'video',pdf:'iframe'})[type]);
-        element.className=`preview-${type}`;element.src=url;
+        element.className=`preview-${type}`;
         if(type==='audio'||type==='video')element.controls=true;
         if(type==='pdf')element.title=item.name;
-        if(type==='image')element.alt=item.name;
+        if(type==='image'){
+          element.alt=item.name;
+          element.addEventListener('load',()=>{if(id!==loadId)return;if(element.naturalWidth<32&&element.naturalHeight<32)element.classList.add('is-tiny');meta.textContent+=` · ${element.naturalWidth} × ${element.naturalHeight} px`;});
+          element.addEventListener('error',()=>{if(id===loadId)message('圖片無法解碼或已損毀。可以下載原檔確認格式。');});
+        }
+        element.src=url;
         if(id===loadId)body.replaceChildren(element);return;
       }
       if(type==='markdown'){const text=await loadText(url);if(id===loadId)renderMarkdown(text);return;}
@@ -182,6 +244,23 @@ const LiteNestPreview = (() => {
         const pre=document.createElement('pre');pre.className='code-view';
         if(ext==='json'){try{pre.textContent=JSON.stringify(JSON.parse(text),null,2);}catch{pre.textContent=text;}}else pre.textContent=text;
         body.replaceChildren(pre);return;
+      }
+      if(type==='office'){
+        const result=await officePages(await loadBuffer(url),ext);
+        if(id===loadId)renderOffice(result.pages,result.presentation);return;
+      }
+      if(type==='legacy'){
+        const response=await fetch(`/api/office-preview?path=${encodeURIComponent(item.path)}`,{credentials:'same-origin'});
+        if(response.ok){
+          const blob=await response.blob();if(id!==loadId)return;
+          convertedURL=URL.createObjectURL(blob);
+          const frame=document.createElement('iframe');frame.className='preview-pdf';frame.title=item.name;frame.src=convertedURL;
+          body.replaceChildren(frame);meta.textContent+=' · PDF 轉換預覽';return;
+        }
+        await renderBinary(url,item.name,id);return;
+      }
+      if(type==='unknown'){
+        await renderBinary(url,item.name,id);return;
       }
       if(type==='sheet'){
         let sheets;
@@ -192,6 +271,6 @@ const LiteNestPreview = (() => {
       message('目前沒有適合這種格式的站內檢視器，請使用右上角「下載」開啟。');
     } catch(error) {if(id===loadId)message(error.message||'預覽失敗，請下載後開啟。');}
   }
-  dialog.addEventListener('close',()=>{loadId++;body.replaceChildren();});
+  dialog.addEventListener('close',()=>{loadId++;body.replaceChildren();if(convertedURL){URL.revokeObjectURL(convertedURL);convertedURL=null;}});
   return {open};
 })();

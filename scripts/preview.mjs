@@ -82,7 +82,8 @@ const server=http.createServer(async (request,response)=>{
     const ext=path.posix.extname(relative).toLowerCase();
     const types={'.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.gif':'image/gif','.webp':'image/webp','.bmp':'image/bmp','.avif':'image/avif','.pdf':'application/pdf','.mp3':'audio/mpeg','.m4a':'audio/mp4','.wav':'audio/wav','.ogg':'audio/ogg','.flac':'audio/flac','.mp4':'video/mp4','.m4v':'video/mp4','.webm':'video/webm','.mov':'video/quicktime','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.ods':'application/vnd.oasis.opendocument.spreadsheet'};
     const textExtensions=new Set(['.md','.markdown','.csv','.tsv','.py','.cmd','.bat','.ps1','.js','.mjs','.cjs','.json','.css','.html','.htm','.xml','.svg','.go','.sh','.bash','.sql','.yml','.yaml','.toml','.ini','.conf','.log','.txt','.ts','.tsx','.jsx','.rs','.c','.h','.cpp','.java','.rb','.php']);
-    const type=types[ext]||(textExtensions.has(ext)?'text/plain; charset=utf-8':null);
+    const officeTypes={'.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','.pptx':'application/vnd.openxmlformats-officedocument.presentationml.presentation','.odt':'application/vnd.oasis.opendocument.text','.odp':'application/vnd.oasis.opendocument.presentation'};
+    const type=types[ext]||officeTypes[ext]||(textExtensions.has(ext)?'text/plain; charset=utf-8':'application/octet-stream');
     if(!type)return json(response,415,{error:'此格式不支援站內預覽'});
     record(activityLog,actor.username,'預覽檔案',relative);
     response.writeHead(200,{'Content-Type':type,'Content-Length':file.size,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});return response.end(file.data);
