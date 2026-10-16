@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -75,4 +78,20 @@ func TestAuditActivityIsFilteredByUser(t *testing.T) {
  }
  all,err := app.readLogs("activity","",true)
  if err!=nil || len(all)!=2 { t.Fatalf("expected both entries for admin: %+v, %v",all,err) }
+}
+
+func TestPreviewFileIsInlineAndSafe(t *testing.T) {
+ app:=&App{dataDir:t.TempDir()}
+ root:=app.userRoot("alice")
+ if err:=os.MkdirAll(root,0750);err!=nil { t.Fatal(err) }
+ if err:=os.WriteFile(filepath.Join(root,"example.js"),[]byte("alert(1)"),0600);err!=nil { t.Fatal(err) }
+ user:=&User{Username:"alice",Permissions:Permissions{Read:true}}
+ request:=httptest.NewRequest(http.MethodGet,"/api/preview?path=example.js",nil)
+ response:=httptest.NewRecorder()
+ app.previewFile(response,request,user)
+ if response.Code!=200 || response.Header().Get("Content-Type")!="text/plain; charset=utf-8" || response.Body.String()!="alert(1)" { t.Fatalf("unsafe preview: %d, %v, %s",response.Code,response.Header(),response.Body.String()) }
+ if got:=response.Header().Get("Content-Disposition");!strings.HasPrefix(got,"inline") { t.Fatalf("preview should be inline: %q",got) }
+ denied:=httptest.NewRecorder()
+ app.previewFile(denied,request,&User{Username:"alice"})
+ if denied.Code!=403 { t.Fatalf("read permission was not enforced: %d",denied.Code) }
 }

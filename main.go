@@ -92,7 +92,7 @@ func deriveKey(password,salt []byte)[]byte{block:=make([]byte,len(salt)+4);copy(
 func(a *App)routes()http.Handler{
  mux:=http.NewServeMux()
  mux.HandleFunc("POST /api/login",a.login);mux.HandleFunc("POST /api/logout",a.withAuth(a.logout));mux.HandleFunc("GET /api/me",a.withAuth(a.me));mux.HandleFunc("POST /api/password",a.withAuth(a.changePassword))
- mux.HandleFunc("GET /api/files",a.withAuth(a.files));mux.HandleFunc("POST /api/folders",a.withAuth(a.createFolder));mux.HandleFunc("POST /api/upload",a.withAuth(a.upload));mux.HandleFunc("GET /api/download",a.withAuth(a.download));mux.HandleFunc("DELETE /api/files",a.withAuth(a.deleteFile))
+ mux.HandleFunc("GET /api/files",a.withAuth(a.files));mux.HandleFunc("POST /api/folders",a.withAuth(a.createFolder));mux.HandleFunc("POST /api/upload",a.withAuth(a.upload));mux.HandleFunc("GET /api/download",a.withAuth(a.download));mux.HandleFunc("GET /api/preview",a.withAuth(a.previewFile));mux.HandleFunc("DELETE /api/files",a.withAuth(a.deleteFile))
  mux.HandleFunc("GET /api/users",a.withAdmin(a.listUsers));mux.HandleFunc("POST /api/users",a.withAdmin(a.createUser));mux.HandleFunc("PATCH /api/users/{username}",a.withAdmin(a.updateUser));mux.HandleFunc("DELETE /api/users/{username}",a.withAdmin(a.deleteUser));mux.HandleFunc("GET /api/health",a.health)
  mux.HandleFunc("GET /api/settings/global",a.withAdmin(a.getGlobalSettings));mux.HandleFunc("PATCH /api/settings/global",a.withAdmin(a.updateGlobalSettings));mux.HandleFunc("PATCH /api/settings/me",a.withAuth(a.updateMySettings))
  mux.HandleFunc("GET /api/logs/global",a.withAdmin(a.globalLogs));mux.HandleFunc("GET /api/logs/activity",a.withAuth(a.activityLogs))

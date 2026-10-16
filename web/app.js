@@ -74,13 +74,13 @@ function renderFiles() {
   const query = $('#searchInput').value.trim().toLowerCase(); const items = state.items.filter(item => item.name.toLowerCase().includes(query));
   $('#emptyState').classList.toggle('hidden', items.length > 0); $('#fileList').innerHTML = items.map(item => {
     const icon = item.is_dir ? '▰' : fileIcon(item.name); const size = item.is_dir ? '資料夾' : formatBytes(item.size);
-    const open = item.is_dir ? `data-open="${escapeHtml(item.path)}"` : `data-download="${escapeHtml(item.path)}"`;
+    const open = item.is_dir ? `data-open="${escapeHtml(item.path)}"` : `data-preview="${escapeHtml(item.path)}"`;
     const download = item.is_dir ? '' : `<a href="/api/download?path=${encodeURIComponent(item.path)}">下載</a>`;
     const remove = state.me.admin || state.me.permissions.delete ? `<button class="danger delete-item" data-delete="${escapeHtml(item.path)}">刪除</button>` : '';
     return `<div class="file-row"><div class="file-name"><span class="file-icon">${icon}</span><button ${open}>${escapeHtml(item.name)}</button></div><span class="file-meta">${size}</span><span class="file-meta">${formatDate(item.modified)}</span><div class="row-actions"><button class="more" aria-label="更多操作">⋯</button><div class="action-menu hidden">${download}${remove}</div></div></div>`;
   }).join('');
   $('#fileList').querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', () => loadFiles(el.dataset.open)));
-  $('#fileList').querySelectorAll('[data-download]').forEach(el => el.addEventListener('click', () => { location.href = `/api/download?path=${encodeURIComponent(el.dataset.download)}`; }));
+  $('#fileList').querySelectorAll('[data-preview]').forEach(el => el.addEventListener('click', () => { const item=state.items.find(entry=>entry.path===el.dataset.preview);if(item)LiteNestPreview.open(item); }));
   $('#fileList').querySelectorAll('.more').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); document.querySelectorAll('.action-menu').forEach(menu => { if (menu !== button.nextElementSibling) menu.classList.add('hidden'); }); button.nextElementSibling.classList.toggle('hidden'); }));
   $('#fileList').querySelectorAll('.delete-item').forEach(button => button.addEventListener('click', () => deleteItem(button.dataset.delete)));
 }

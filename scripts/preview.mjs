@@ -76,6 +76,17 @@ const server=http.createServer(async (request,response)=>{
     if(!file)return json(response,404,{error:'檔案不存在'});
     response.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename="${path.posix.basename(relative).replaceAll('"','')}"`});record(activityLog,actor.username,'下載檔案',relative);return response.end(file.data);
   }
+  if(url.pathname==='/api/preview'&&request.method==='GET'){
+    const relative=url.searchParams.get('path')||'';const file=files.get(itemKey(actor.username,relative));
+    if(!file)return json(response,404,{error:'檔案不存在'});
+    const ext=path.posix.extname(relative).toLowerCase();
+    const types={'.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.gif':'image/gif','.webp':'image/webp','.bmp':'image/bmp','.avif':'image/avif','.pdf':'application/pdf','.mp3':'audio/mpeg','.m4a':'audio/mp4','.wav':'audio/wav','.ogg':'audio/ogg','.flac':'audio/flac','.mp4':'video/mp4','.m4v':'video/mp4','.webm':'video/webm','.mov':'video/quicktime','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.ods':'application/vnd.oasis.opendocument.spreadsheet'};
+    const textExtensions=new Set(['.md','.markdown','.csv','.tsv','.py','.cmd','.bat','.ps1','.js','.mjs','.cjs','.json','.css','.html','.htm','.xml','.svg','.go','.sh','.bash','.sql','.yml','.yaml','.toml','.ini','.conf','.log','.txt','.ts','.tsx','.jsx','.rs','.c','.h','.cpp','.java','.rb','.php']);
+    const type=types[ext]||(textExtensions.has(ext)?'text/plain; charset=utf-8':null);
+    if(!type)return json(response,415,{error:'此格式不支援站內預覽'});
+    record(activityLog,actor.username,'預覽檔案',relative);
+    response.writeHead(200,{'Content-Type':type,'Content-Length':file.size,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});return response.end(file.data);
+  }
   if(url.pathname==='/api/files'&&request.method==='DELETE'){const item=url.searchParams.get('path');const key=itemKey(actor.username,item);folders.delete(key);files.delete(key);for(const name of [...folders])if(name.startsWith(`${key}/`))folders.delete(name);for(const name of [...files.keys()])if(name.startsWith(`${key}/`))files.delete(name);record(activityLog,actor.username,'刪除檔案或資料夾',item);return json(response,204);}
   if(url.pathname==='/api/users'&&request.method==='GET') return actor.admin?json(response,200,users.map(publicUser)):json(response,403,{error:'需要管理者權限'});
   if(url.pathname==='/api/users'&&request.method==='POST'){if(!actor.admin)return json(response,403,{error:'需要管理者權限'});const input=await body(request);const username=String(input.username||'').trim().toLowerCase();if(users.some(user=>user.username.toLowerCase()===username))return json(response,409,{error:'使用者已存在'});if(!/^[a-z0-9_-]{3,32}$/.test(username))return json(response,400,{error:'帳號需為 3–32 個小寫英數字元、連字號或底線'});const user={...input,username,permissions:input.permissions??settings.default_permissions,quota_bytes:input.quota_bytes??settings.default_quota_bytes,glass_level:input.glass_level??null,used_bytes:0,created_at:new Date().toISOString()};users.push(user);record(globalLog,actor.username,'建立使用者',user.username);return json(response,201,publicUser(user));}
