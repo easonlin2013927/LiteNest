@@ -6,12 +6,14 @@ const root = path.resolve(import.meta.dirname, '..');
 const web = path.join(root, 'web');
 const port = Number(process.argv[2] || process.env.PORT || 4173);
 const folders = new Set();
+const files = new Map();
 const users = [{ username:'admin', password:'admin', admin:true, permissions:{read:true,write:true,delete:true}, quota_bytes:0, glass_level:null, used_bytes:0, created_at:new Date().toISOString() }];
 let settings = {default_permissions:{read:true,write:true,delete:false},default_quota_bytes:0,default_glass_level:70};
 const globalLog = [];
 const activityLog = [];
 function record(list,actor,action,detail='') { list.unshift({time:new Date().toISOString(),actor,action,detail}); }
-function publicUser(user) { const {password,...safe}=user; return safe; }
+function publicUser(user) { const {password,...safe}=user; return {...safe,used_bytes:[...files.entries()].filter(([name])=>name.startsWith(`${user.username}/`)).reduce((sum,[,file])=>sum+file.size,0)}; }
+function itemKey(username,relative) { return `${username}/${relative}`; }
 
 function json(response, status, value) {
   response.writeHead(status, {'Content-Type':'application/json; charset=utf-8'});
@@ -46,14 +48,37 @@ const server=http.createServer(async (request,response)=>{
   if(url.pathname==='/api/logs/activity') return json(response,200,actor.admin&&url.searchParams.get('scope')==='all'?activityLog:activityLog.filter(entry=>entry.actor===actor.username));
   if(url.pathname==='/api/files'&&request.method==='GET'){
     const current=url.searchParams.get('path')||'';
-    const items=[...folders].filter(item=>path.posix.dirname(item)===(current||'.')).map(item=>({name:path.posix.basename(item),path:item,is_dir:true,size:0,modified:new Date().toISOString()}));
+    const ownFolders=[...folders].filter(item=>item.startsWith(`${actor.username}/`)).map(item=>item.slice(actor.username.length+1));
+    const items=ownFolders.filter(item=>path.posix.dirname(item)===(current||'.')).map(item=>({name:path.posix.basename(item),path:item,is_dir:true,size:0,modified:new Date().toISOString()}));
+    for(const [key,file] of files) { if(!key.startsWith(`${actor.username}/`))continue; const relative=key.slice(actor.username.length+1); if(path.posix.dirname(relative)===(current||'.'))items.push({name:path.posix.basename(relative),path:relative,is_dir:false,size:file.size,modified:file.modified}); }
+    items.sort((a,b)=>Number(b.is_dir)-Number(a.is_dir)||a.name.localeCompare(b.name,'zh-TW'));
     return json(response,200,{path:current,items});
   }
-  if(url.pathname==='/api/folders'&&request.method==='POST'){const input=await body(request);folders.add(input.path);record(activityLog,actor.username,'建立資料夾',input.path);return json(response,201,{path:input.path});}
-  if(url.pathname==='/api/upload'&&request.method==='POST') return json(response,201,{uploaded:['preview-file']});
-  if(url.pathname==='/api/files'&&request.method==='DELETE'){const item=url.searchParams.get('path');folders.delete(item);record(activityLog,actor.username,'刪除檔案或資料夾',item);return json(response,204);}
+  if(url.pathname==='/api/folders'&&request.method==='POST'){const input=await body(request);const key=itemKey(actor.username,input.path);if(folders.has(key)||files.has(key))return json(response,409,{error:'同名項目已存在'});folders.add(key);record(activityLog,actor.username,'建立資料夾',input.path);return json(response,201,{path:input.path});}
+  if(url.pathname==='/api/upload'&&request.method==='POST'){
+    const current=url.searchParams.get('path')||'';
+    if(current&&!folders.has(itemKey(actor.username,current)))return json(response,400,{error:'目的資料夾不存在'});
+    let form;try{form=await new Request('http://localhost/api/upload',{method:'POST',headers:request.headers,body:request,duplex:'half'}).formData();}catch{return json(response,400,{error:'上傳格式無效'});}
+    const uploaded=[];
+    for(const file of form.getAll('files')){
+      if(typeof file==='string'||!file.name)continue;
+      const relative=path.posix.join(current,path.posix.basename(file.name));
+      const key=itemKey(actor.username,relative);
+      if(folders.has(key))return json(response,409,{error:'同名資料夾已存在'});
+      files.set(key,{data:Buffer.from(await file.arrayBuffer()),size:file.size,modified:new Date().toISOString()});
+      uploaded.push(file.name);record(activityLog,actor.username,'上傳檔案',relative);
+    }
+    if(!uploaded.length)return json(response,400,{error:'沒有選擇檔案'});
+    return json(response,201,{uploaded});
+  }
+  if(url.pathname==='/api/download'&&request.method==='GET'){
+    const relative=url.searchParams.get('path')||'';const file=files.get(itemKey(actor.username,relative));
+    if(!file)return json(response,404,{error:'檔案不存在'});
+    response.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename="${path.posix.basename(relative).replaceAll('"','')}"`});record(activityLog,actor.username,'下載檔案',relative);return response.end(file.data);
+  }
+  if(url.pathname==='/api/files'&&request.method==='DELETE'){const item=url.searchParams.get('path');const key=itemKey(actor.username,item);folders.delete(key);files.delete(key);for(const name of [...folders])if(name.startsWith(`${key}/`))folders.delete(name);for(const name of [...files.keys()])if(name.startsWith(`${key}/`))files.delete(name);record(activityLog,actor.username,'刪除檔案或資料夾',item);return json(response,204);}
   if(url.pathname==='/api/users'&&request.method==='GET') return actor.admin?json(response,200,users.map(publicUser)):json(response,403,{error:'需要管理者權限'});
-  if(url.pathname==='/api/users'&&request.method==='POST'){if(!actor.admin)return json(response,403,{error:'需要管理者權限'});const input=await body(request);const user={...input,permissions:input.permissions??settings.default_permissions,quota_bytes:input.quota_bytes??settings.default_quota_bytes,glass_level:input.glass_level??null,used_bytes:0,created_at:new Date().toISOString()};users.push(user);record(globalLog,actor.username,'建立使用者',user.username);return json(response,201,publicUser(user));}
+  if(url.pathname==='/api/users'&&request.method==='POST'){if(!actor.admin)return json(response,403,{error:'需要管理者權限'});const input=await body(request);const username=String(input.username||'').trim().toLowerCase();if(users.some(user=>user.username.toLowerCase()===username))return json(response,409,{error:'使用者已存在'});if(!/^[a-z0-9_-]{3,32}$/.test(username))return json(response,400,{error:'帳號需為 3–32 個小寫英數字元、連字號或底線'});const user={...input,username,permissions:input.permissions??settings.default_permissions,quota_bytes:input.quota_bytes??settings.default_quota_bytes,glass_level:input.glass_level??null,used_bytes:0,created_at:new Date().toISOString()};users.push(user);record(globalLog,actor.username,'建立使用者',user.username);return json(response,201,publicUser(user));}
   if(url.pathname.startsWith('/api/users/')&&request.method==='PATCH'){if(!actor.admin)return json(response,403,{error:'需要管理者權限'});const input=await body(request);const name=decodeURIComponent(url.pathname.split('/').pop());const user=users.find(item=>item.username===name);Object.assign(user,input);if(input.use_global_glass)user.glass_level=null;record(globalLog,actor.username,'更新使用者',name);return json(response,200,publicUser(user));}
   if(url.pathname.startsWith('/api/users/')&&request.method==='DELETE'){if(!actor.admin)return json(response,403,{error:'需要管理者權限'});const name=decodeURIComponent(url.pathname.split('/').pop());const index=users.findIndex(item=>item.username===name);if(index>0)users.splice(index,1);record(globalLog,actor.username,'刪除使用者',name);return json(response,204);}
 

@@ -46,3 +46,21 @@ input[type=range]{padding:0;accent-color:var(--green-2);box-shadow:none}
 .log-row small{overflow-wrap:anywhere}
 #globalView>.section-toolbar{margin-top:34px}
 @media(max-width:650px){.settings-card{padding:18px}.log-row{grid-template-columns:1fr auto;gap:4px}.log-row span,.log-row small{grid-column:1/-1}}
+
+/* Layered glass: clear edges, soft color refraction and a visible backdrop. */
+:root{--glass-top:.67;--glass-bottom:.53;--glass-saturation:161%}
+.app-shell{background:radial-gradient(circle at 90% 9%,rgba(91,190,153,.48),transparent 27%),radial-gradient(circle at 13% 64%,rgba(140,205,231,.35),transparent 30%),radial-gradient(circle at 76% 88%,rgba(224,208,157,.33),transparent 28%),linear-gradient(135deg,#f1f5ef,#e8f1ee 54%,#eef0e7)}
+.login-panel{background:radial-gradient(circle at 82% 16%,rgba(113,205,176,.48),transparent 30%),radial-gradient(circle at 12% 82%,rgba(141,199,226,.39),transparent 36%),#edf3ef}
+.login-card,.file-surface,.user-table,.settings-card,dialog{border:1px solid rgba(255,255,255,.82);background:linear-gradient(145deg,rgba(255,255,255,var(--glass-top)),rgba(237,250,245,var(--glass-bottom)));backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturation));-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturation));box-shadow:0 20px 55px rgba(18,64,49,.14),0 3px 12px rgba(23,61,43,.06),inset 0 1px 0 rgba(255,255,255,.98),inset 1px 0 0 rgba(255,255,255,.55)}
+.login-card,.settings-card,dialog{position:relative}
+.login-card:after,.file-surface:after,.user-table:after,.settings-card:after,dialog:after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;border-radius:inherit;background:linear-gradient(125deg,rgba(255,255,255,.48),transparent 27%,transparent 73%,rgba(190,229,216,.16));box-shadow:inset 0 0 0 1px rgba(255,255,255,.26)}
+.login-card>*,.file-surface>*,.user-table>*,.settings-card>*,dialog>*{position:relative;z-index:1}
+.sidebar{background:linear-gradient(155deg,rgba(248,252,249,.75),rgba(226,242,234,.56));backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturation));-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturation))}
+.file-surface{overflow:visible}
+.file-head{border-radius:20px 20px 0 0}
+.file-row:last-child{border-radius:0 0 20px 20px}
+.file-row:has(.action-menu:not(.hidden)){z-index:8}
+.action-menu{z-index:10;right:0;top:calc(100% + 5px);min-width:155px;border:1px solid rgba(255,255,255,.88);border-radius:13px;background:linear-gradient(145deg,rgba(255,255,255,.89),rgba(238,249,244,.80));backdrop-filter:blur(24px) saturate(160%);-webkit-backdrop-filter:blur(24px) saturate(160%);box-shadow:0 16px 35px rgba(18,64,49,.18),inset 0 1px 0 #fff}
+.primary,.secondary,.nav-item,.action-menu button,.action-menu a{transition:background .2s,box-shadow .2s,transform .2s}
+.secondary{background:rgba(255,255,255,.68);backdrop-filter:blur(12px)}
+@supports not (backdrop-filter:blur(2px)){.login-card,.sidebar,.file-surface,.user-table,.settings-card,dialog,.action-menu{background:#f8faf7}}
