@@ -46,8 +46,10 @@ function applyProfile() {
 }
 function applyGlass(level) {
   const amount = Math.max(0, Math.min(100, Number(level)));
-  document.documentElement.style.setProperty('--glass-opacity', (0.96 - amount * .0038).toFixed(2));
-  document.documentElement.style.setProperty('--glass-blur', `${Math.round(amount * .28)}px`);
+  document.documentElement.style.setProperty('--glass-top', (0.98 - amount * .0045).toFixed(2));
+  document.documentElement.style.setProperty('--glass-bottom', (0.96 - amount * .0062).toFixed(2));
+  document.documentElement.style.setProperty('--glass-blur', `${Math.round(4 + amount * .32)}px`);
+  document.documentElement.style.setProperty('--glass-saturation', `${Math.round(105 + amount * .8)}%`);
   document.documentElement.style.setProperty('--glass-shadow-strength', (amount / 100).toFixed(2));
 }
 
