@@ -30,8 +30,12 @@ func previewType(name string) string {
  case ".mov": return "video/quicktime"
  case ".xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
  case ".ods": return "application/vnd.oasis.opendocument.spreadsheet"
+ case ".docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+ case ".pptx": return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+ case ".odt": return "application/vnd.oasis.opendocument.text"
+ case ".odp": return "application/vnd.oasis.opendocument.presentation"
  case ".md", ".markdown", ".csv", ".tsv", ".py", ".cmd", ".bat", ".ps1", ".js", ".mjs", ".cjs", ".json", ".css", ".html", ".htm", ".xml", ".svg", ".go", ".sh", ".bash", ".sql", ".yml", ".yaml", ".toml", ".ini", ".conf", ".log", ".txt", ".ts", ".tsx", ".jsx", ".rs", ".c", ".h", ".cpp", ".java", ".rb", ".php": return "text/plain; charset=utf-8"
- default: return ""
+ default: return "application/octet-stream"
  }
 }
 

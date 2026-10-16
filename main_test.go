@@ -95,3 +95,14 @@ func TestPreviewFileIsInlineAndSafe(t *testing.T) {
  app.previewFile(denied,request,&User{Username:"alice"})
  if denied.Code!=403 { t.Fatalf("read permission was not enforced: %d",denied.Code) }
 }
+
+func TestPreviewTypesIncludeOfficeAndSafeFallback(t *testing.T) {
+ cases:=map[string]string{
+  "photo.png":"image/png",
+  "letter.docx":"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "slides.pptx":"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "legacy.doc":"application/octet-stream",
+  "mystery.dat":"application/octet-stream",
+ }
+ for name,want:=range cases { if got:=previewType(name);got!=want { t.Errorf("previewType(%q) = %q, want %q",name,got,want) } }
+}
