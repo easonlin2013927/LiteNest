@@ -8,6 +8,7 @@
 - 帳號登入與安全的 HttpOnly 工作階段
 - 檔案上傳、下載、搜尋、建立資料夾與刪除
 - 拖放與多檔上傳
+- 點選檔案可站內唯讀預覽：圖片、PDF、影音、Markdown、CSV／TSV／XLSX／ODS 及常見程式碼與設定檔
 - 每位使用者擁有隔離的個人空間
 - 管理者可建立、編輯、刪除使用者
 - 可分別授予讀取、寫入、刪除與管理者權限
@@ -29,7 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/easonlin2013927/litenest/main/insta
 
 安裝完成後，開啟 `http://樹莓派IP:8080`。
 
-預設管理者帳號與密碼都是 `admin`。第一次登入後，請立即按右上角「變更密碼」。
+預設管理者帳號與密碼都是 `admin`。第一次登入後，請立即在「個人設定」中變更密碼。
 
 > 安裝器會下載最新 GitHub Release，因此儲存庫必須至少發布過一個版本標籤。
 
@@ -55,6 +56,7 @@ go build -trimpath -ldflags="-s -w" -o litenest .
 data/
 ├── config.json          # 帳號、密碼雜湊、權限與配額
 ├── users/<username>/    # 每位使用者的個人檔案
+├── audit/               # 全域設定與操作日誌
 └── trash/users/         # 已刪除帳號的保留檔案
 ```
 
@@ -96,6 +98,8 @@ go run . -data ./data
 ```sh
 node scripts/preview.mjs
 ```
+
+這是記憶體中的 UI 預覽；測試用檔案與帳號會在伺服器重新啟動後清空。站內檢視器不執行上傳的腳本或 HTML；舊版 `.xls` 等尚未支援的格式可透過「下載」開啟。
 
 目前版本聚焦可靠的 NAS 核心。檔案分享連結、縮圖、WebDAV、版本歷史與相簿等功能可在後續版本逐步加入。
 
