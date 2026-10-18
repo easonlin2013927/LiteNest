@@ -219,9 +219,10 @@ const LiteNestPreview = (() => {
   async function open(item) {
     const id=++loadId,ext=item.name.split('.').pop().toLowerCase(),type=kind(item.name);
     if(convertedURL){URL.revokeObjectURL(convertedURL);convertedURL=null;}
-    const url=`/api/preview?path=${encodeURIComponent(item.path)}`;
+    const owner=item.owner?`&owner=${encodeURIComponent(item.owner)}`:'';
+    const url=`/api/preview?path=${encodeURIComponent(item.path)}${owner}`;
     title.textContent=item.name;meta.textContent=`${type==='unknown'?'無法站內預覽':'唯讀預覽'} · ${item.size?`${(item.size/1024).toFixed(1)} KB`:'空白檔案'}`;
-    download.href=`/api/download?path=${encodeURIComponent(item.path)}`;download.setAttribute('download',item.name);
+    download.href=`/api/download?path=${encodeURIComponent(item.path)}${owner}`;download.setAttribute('download',item.name);
     body.classList.toggle('image-stage',type==='image');
     message('正在開啟預覽…');dialog.showModal();
     try {
@@ -250,7 +251,7 @@ const LiteNestPreview = (() => {
         if(id===loadId)renderOffice(result.pages,result.presentation);return;
       }
       if(type==='legacy'){
-        const response=await fetch(`/api/office-preview?path=${encodeURIComponent(item.path)}`,{credentials:'same-origin'});
+        const response=await fetch(`/api/office-preview?path=${encodeURIComponent(item.path)}${owner}`,{credentials:'same-origin'});
         if(response.ok){
           const blob=await response.blob();if(id!==loadId)return;
           convertedURL=URL.createObjectURL(blob);
