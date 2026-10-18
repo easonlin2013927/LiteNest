@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,58 @@ func TestCleanRelative(t *testing.T) {
 			t.Errorf("cleanRelative(%q) unexpectedly succeeded", test.input)
 		}
 	}
+}
+
+func TestThemesAndTrashLifecycle(t *testing.T) {
+ app,err:=newApp(t.TempDir());if err!=nil{t.Fatal(err)}
+ if !validTheme("sage")||!validTheme("plum")||validTheme("unknown"){t.Fatal("theme allowlist is incorrect")}
+ admin:=&User{Username:"admin",Admin:true}
+ global:=httptest.NewRecorder()
+ app.updateGlobalSettings(global,httptest.NewRequest(http.MethodPatch,"/api/settings/global",bytes.NewBufferString(`{"default_permissions":{"read":true,"write":true,"delete":false},"default_quota_bytes":0,"default_glass_level":70,"default_theme":"midnight"}`)),admin)
+ if global.Code!=200{t.Fatalf("global theme update failed: %d %s",global.Code,global.Body.String())}
+ personal:=httptest.NewRecorder()
+ app.updateMySettings(personal,httptest.NewRequest(http.MethodPatch,"/api/settings/me",bytes.NewBufferString(`{"use_global_theme":false,"theme":"peach","skip_delete_confirm":true}`)),admin)
+ if personal.Code!=200{t.Fatalf("personal theme update failed: %d %s",personal.Code,personal.Body.String())}
+ app.store.mu.RLock();stored:=app.store.data.Users["admin"];theme:=app.store.data.Settings.DefaultTheme;personalTheme:=*stored.Theme;skip:=stored.SkipDeleteConfirm;app.store.mu.RUnlock()
+ if theme!="midnight"||personalTheme!="peach"||!skip{t.Fatalf("theme settings not persisted: %s, %s, %v",theme,personalTheme,skip)}
+ root:=app.userRoot("admin")
+ original:=filepath.Join(root,"report.pdf")
+ if err=os.WriteFile(original,[]byte("report"),0600);err!=nil{t.Fatal(err)}
+ deleted:=httptest.NewRecorder()
+ app.deleteFile(deleted,httptest.NewRequest(http.MethodDelete,"/api/files?path=report.pdf",nil),admin)
+ if deleted.Code!=204{t.Fatalf("move to trash failed: %d %s",deleted.Code,deleted.Body.String())}
+ if _,err=os.Stat(original);!errors.Is(err,os.ErrNotExist){t.Fatalf("original still exists: %v",err)}
+ used,err:=app.userUsage("admin");if err!=nil||used!=6{t.Fatalf("trash should count toward quota: %d, %v",used,err)}
+ listed:=httptest.NewRecorder();app.listTrash(listed,httptest.NewRequest(http.MethodGet,"/api/trash",nil),admin)
+ var items []trashEntry;if err=json.Unmarshal(listed.Body.Bytes(),&items);err!=nil||len(items)!=1||items[0].OriginalPath!="report.pdf"{t.Fatalf("trash list: %+v, %v",items,err)}
+ payload:=[]byte(`{"ids":["`+items[0].ID+`"]}`)
+ restored:=httptest.NewRecorder();app.restoreTrash(restored,httptest.NewRequest(http.MethodPost,"/api/trash/restore",bytes.NewReader(payload)),admin)
+ var result trashResult;if err=json.Unmarshal(restored.Body.Bytes(),&result);err!=nil||len(result.Done)!=1{t.Fatalf("restore failed: %+v, %v",result,err)}
+ if content,err:=os.ReadFile(original);err!=nil||string(content)!="report"{t.Fatalf("restored file: %q, %v",content,err)}
+ app.deleteFile(httptest.NewRecorder(),httptest.NewRequest(http.MethodDelete,"/api/files?path=report.pdf",nil),admin)
+ listed=httptest.NewRecorder();app.listTrash(listed,httptest.NewRequest(http.MethodGet,"/api/trash",nil),admin)
+ if err=json.Unmarshal(listed.Body.Bytes(),&items);err!=nil||len(items)!=1{t.Fatalf("second trash list: %+v, %v",items,err)}
+ payload=[]byte(`{"ids":["`+items[0].ID+`"]}`)
+ purged:=httptest.NewRecorder();app.purgeTrash(purged,httptest.NewRequest(http.MethodDelete,"/api/trash",bytes.NewReader(payload)),admin)
+ if err=json.Unmarshal(purged.Body.Bytes(),&result);err!=nil||len(result.Done)!=1{t.Fatalf("purge failed: %+v, %v",result,err)}
+ used,err=app.userUsage("admin");if err!=nil||used!=0{t.Fatalf("purge should free quota: %d, %v",used,err)}
+}
+
+func TestTrashRestoreConflictAndIsolation(t *testing.T){
+ app,err:=newApp(t.TempDir());if err!=nil{t.Fatal(err)}
+ if err=os.WriteFile(filepath.Join(app.userRoot("admin"),"same.txt"),[]byte("old"),0600);err!=nil{t.Fatal(err)}
+ admin:=&User{Username:"admin",Admin:true}
+ app.deleteFile(httptest.NewRecorder(),httptest.NewRequest(http.MethodDelete,"/api/files?path=same.txt",nil),admin)
+ listed:=httptest.NewRecorder();app.listTrash(listed,httptest.NewRequest(http.MethodGet,"/api/trash",nil),admin)
+ var items []trashEntry;if err=json.Unmarshal(listed.Body.Bytes(),&items);err!=nil||len(items)!=1{t.Fatalf("trash list: %+v, %v",items,err)}
+ payload:=[]byte(`{"ids":["`+items[0].ID+`"]}`)
+ if err=os.WriteFile(filepath.Join(app.userRoot("admin"),"same.txt"),[]byte("new"),0600);err!=nil{t.Fatal(err)}
+ conflict:=httptest.NewRecorder();app.restoreTrash(conflict,httptest.NewRequest(http.MethodPost,"/api/trash/restore",bytes.NewReader(payload)),admin)
+ var result trashResult;if err=json.Unmarshal(conflict.Body.Bytes(),&result);err!=nil||len(result.Failed)!=1{t.Fatalf("conflict should not overwrite: %+v, %v",result,err)}
+ if content,_:=os.ReadFile(filepath.Join(app.userRoot("admin"),"same.txt"));string(content)!="new"{t.Fatal("restore overwrote existing file")}
+ bob:=&User{Username:"bob",Permissions:Permissions{Read:true,Write:true,Delete:true}}
+ isolated:=httptest.NewRecorder();app.restoreTrash(isolated,httptest.NewRequest(http.MethodPost,"/api/trash/restore",bytes.NewReader(payload)),bob)
+ if err=json.Unmarshal(isolated.Body.Bytes(),&result);err!=nil||len(result.Failed)!=1{t.Fatalf("cross-user restore was not rejected: %+v, %v",result,err)}
 }
 
 func TestCopyUploadQuota(t *testing.T) {

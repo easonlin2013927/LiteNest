@@ -11,8 +11,9 @@ import (
  "time"
 )
 
-func defaultGlobalSettings() GlobalSettings { return GlobalSettings{DefaultPermissions:Permissions{Read:true,Write:true},DefaultGlassLevel:70} }
+func defaultGlobalSettings() GlobalSettings { return GlobalSettings{DefaultPermissions:Permissions{Read:true,Write:true},DefaultGlassLevel:70,DefaultTheme:"sage"} }
 func validGlass(level int) bool { return level>=0 && level<=100 }
+func validTheme(name string) bool { switch name {case "sage","ocean","peach","midnight","forest","plum":return true};return false }
 
 func(a *App)getGlobalSettings(w http.ResponseWriter,_ *http.Request,_ *User){
  a.store.mu.RLock();settings:=a.store.data.Settings;a.store.mu.RUnlock();writeJSON(w,200,settings)
@@ -20,21 +21,27 @@ func(a *App)getGlobalSettings(w http.ResponseWriter,_ *http.Request,_ *User){
 func(a *App)updateGlobalSettings(w http.ResponseWriter,r *http.Request,actor *User){
  var settings GlobalSettings
  if !decodeJSON(w,r,&settings){return}
- if !validGlass(settings.DefaultGlassLevel)||settings.DefaultQuotaBytes<0 {writeError(w,400,"玻璃效果需介於 0–100，配額不得為負數");return}
+ if !validGlass(settings.DefaultGlassLevel)||settings.DefaultQuotaBytes<0||!validTheme(settings.DefaultTheme) {writeError(w,400,"玻璃效果、配額或介面風格無效");return}
  a.store.mu.Lock();old:=a.store.data.Settings;a.store.data.Settings=settings
  if err:=a.store.saveLocked();err!=nil{a.store.data.Settings=old;a.store.mu.Unlock();writeError(w,500,"無法儲存設定");return}
  a.store.mu.Unlock();a.audit("global",actor.Username,"更新全域預設設定","")
  writeJSON(w,200,settings)
 }
 func(a *App)updateMySettings(w http.ResponseWriter,r *http.Request,actor *User){
- var input struct{ GlassLevel *int `json:"glass_level"`; UseGlobal bool `json:"use_global"` }
+ var input struct{ GlassLevel *int `json:"glass_level"`; UseGlobal *bool `json:"use_global"`; Theme *string `json:"theme"`; UseGlobalTheme *bool `json:"use_global_theme"`; SkipDeleteConfirm *bool `json:"skip_delete_confirm"` }
  if !decodeJSON(w,r,&input){return}
- if !input.UseGlobal&&(input.GlassLevel==nil||!validGlass(*input.GlassLevel)){writeError(w,400,"玻璃效果需介於 0–100");return}
+ if input.UseGlobal!=nil&&!*input.UseGlobal&&(input.GlassLevel==nil||!validGlass(*input.GlassLevel)){writeError(w,400,"玻璃效果需介於 0–100");return}
+ if input.GlassLevel!=nil&&!validGlass(*input.GlassLevel){writeError(w,400,"玻璃效果需介於 0–100");return}
+ if input.UseGlobalTheme!=nil&&!*input.UseGlobalTheme&&(input.Theme==nil||!validTheme(*input.Theme)){writeError(w,400,"介面風格無效");return}
+ if input.Theme!=nil&&!validTheme(*input.Theme){writeError(w,400,"介面風格無效");return}
+ if input.UseGlobal==nil&&input.GlassLevel==nil&&input.UseGlobalTheme==nil&&input.Theme==nil&&input.SkipDeleteConfirm==nil{writeError(w,400,"沒有可更新的設定");return}
  a.store.mu.Lock();stored:=a.store.data.Users[actor.Username];if stored==nil{a.store.mu.Unlock();writeError(w,404,"找不到使用者");return}
- old:=stored.GlassLevel
- if input.UseGlobal{stored.GlassLevel=nil}else{level:=*input.GlassLevel;stored.GlassLevel=&level}
- if err:=a.store.saveLocked();err!=nil{stored.GlassLevel=old;a.store.mu.Unlock();writeError(w,500,"無法儲存設定");return}
- result:=publicUser(stored);result["default_glass_level"]=a.store.data.Settings.DefaultGlassLevel;a.store.mu.Unlock()
+ old:=*stored
+ if input.UseGlobal!=nil {if *input.UseGlobal{stored.GlassLevel=nil}else{level:=*input.GlassLevel;stored.GlassLevel=&level}}else if input.GlassLevel!=nil{level:=*input.GlassLevel;stored.GlassLevel=&level}
+ if input.UseGlobalTheme!=nil{if *input.UseGlobalTheme{stored.Theme=nil}else{theme:=*input.Theme;stored.Theme=&theme}}else if input.Theme!=nil{theme:=*input.Theme;stored.Theme=&theme}
+ if input.SkipDeleteConfirm!=nil{stored.SkipDeleteConfirm=*input.SkipDeleteConfirm}
+ if err:=a.store.saveLocked();err!=nil{*stored=old;a.store.mu.Unlock();writeError(w,500,"無法儲存設定");return}
+ result:=publicUser(stored);result["default_glass_level"]=a.store.data.Settings.DefaultGlassLevel;result["default_theme"]=a.store.data.Settings.DefaultTheme;a.store.mu.Unlock()
  a.audit("activity",actor.Username,"變更個人顯示設定","")
  writeJSON(w,200,result)
 }

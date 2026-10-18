@@ -37,7 +37,8 @@
     <aside class="sidebar">
       <a class="brand" href="#"><span class="brand-mark">L</span><span>LiteNest</span></a>
       <nav>
-        <button class="nav-item active" data-view="files"><span>▱</span> 我的檔案</button>
+        <button class="nav-item active" data-view="files"><svg class="nav-glyph" viewBox="0 0 32 32" aria-hidden="true"><path d="M3 9a3 3 0 0 1 3-3h7l3 3h10a3 3 0 0 1 3 3v13a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3Z" fill="currentColor" opacity=".32"/><path d="M3 14h26l-3 13H6a3 3 0 0 1-3-3Z" fill="currentColor"/></svg> 我的檔案</button>
+        <button class="nav-item" data-view="trash"><svg class="nav-glyph" viewBox="0 0 32 32" aria-hidden="true"><path d="M8 9h16l-1 18H9L8 9Zm-2-3h20M13 6V4h6v2M13 13v10m6-10v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> 垃圾桶</button>
         <button id="globalNav" class="nav-item hidden" data-view="global"><span>◎</span> 全域設定</button>
         <button class="nav-item" data-view="personal"><span>⚙</span> 個人設定</button>
       </nav>
@@ -70,6 +71,11 @@
         </div>
       </section>
 
+      <section id="trashView" class="hidden">
+        <div class="trash-toolbar"><p id="trashSelectionStatus">刪除的項目會保留在這裡，直到你永久刪除。</p><div class="trash-actions"><button id="restoreSelectedButton" class="secondary" disabled>還原勾選項目</button><button id="restoreAllButton" class="secondary" disabled>還原全部</button><button id="deleteSelectedButton" class="secondary danger-button" disabled>永久刪除勾選項目</button><button id="emptyTrashButton" class="secondary danger-button" disabled>清空垃圾桶</button></div></div>
+        <div class="file-surface trash-surface"><div class="trash-head"><label><input id="trashSelectAll" type="checkbox" aria-label="全選垃圾桶項目"> 名稱</label><span>大小</span><span>刪除時間</span><span>原始位置</span></div><div id="trashList"></div><div id="trashEmpty" class="empty hidden"><div class="empty-icon">✦</div><h3>垃圾桶是空的</h3><p>刪除的檔案會先移到這裡。</p></div></div>
+      </section>
+
       <section id="globalView" class="hidden">
         <div class="settings-card">
           <div class="section-toolbar"><div><h2>新使用者預設設定</h2><p>新增帳號時會預先套用；玻璃效果也會提供給未自訂外觀的現有使用者。</p></div></div>
@@ -78,6 +84,7 @@
               <label>預設儲存配額 (GB)<input id="defaultQuota" type="number" min="0" step="0.1" value="0"><small>0 表示不限</small></label>
               <label>預設 Liquid Glass 程度 <output id="defaultGlassValue">70%</output><input id="defaultGlass" type="range" min="0" max="100" value="70"></label>
             </div>
+            <fieldset class="theme-fieldset"><legend>新使用者預設介面風格</legend><div id="globalThemeOptions" class="theme-grid"></div></fieldset>
             <fieldset><legend>新使用者預設權限</legend><label><input id="defaultRead" type="checkbox"> 讀取與下載</label><label><input id="defaultWrite" type="checkbox"> 上傳與建立資料夾</label><label><input id="defaultDelete" type="checkbox"> 刪除檔案</label></fieldset>
             <div class="dialog-actions"><button class="primary" type="submit">儲存全域設定</button></div>
           </form>
@@ -91,10 +98,13 @@
       <section id="personalView" class="hidden">
         <section id="warningBanner" class="warning hidden"><span>!</span><div><strong>請先更改預設密碼</strong><p>你目前仍在使用 admin 預設密碼，建議立即變更。</p></div><button id="warningAction">立即變更</button></section>
         <div class="settings-card">
-          <div class="section-toolbar"><div><h2>我的顯示設定</h2><p>調整自己看到的玻璃透明與模糊效果。</p></div></div>
+          <div class="section-toolbar"><div><h2>我的顯示設定</h2><p>選擇喜歡的配色與玻璃效果。</p></div></div>
           <form id="personalForm">
+            <label class="setting-toggle"><input id="useGlobalTheme" type="checkbox"> 介面風格使用全域預設</label>
+            <fieldset id="personalThemeFieldset" class="theme-fieldset"><legend>介面風格</legend><div id="personalThemeOptions" class="theme-grid"></div></fieldset>
             <label class="setting-toggle"><input id="useGlobalGlass" type="checkbox"> 使用全域預設</label>
             <label class="slider-label">Liquid Glass 程度 <output id="personalGlassValue">70%</output><input id="personalGlass" type="range" min="0" max="100" value="70"></label>
+            <label class="setting-toggle"><input id="askBeforeDelete" type="checkbox" checked> 刪除檔案前先詢問我</label>
             <div class="dialog-actions"><button class="primary" type="submit">儲存個人設定</button></div>
           </form>
         </div>
@@ -107,6 +117,8 @@
   <dialog id="folderDialog"><form id="folderForm"><div class="dialog-head"><div><p class="eyebrow green">ORGANIZE</p><h2>建立新資料夾</h2></div><button type="button" data-close-dialog class="close" aria-label="關閉">×</button></div><label>資料夾名稱<input id="folderName" required maxlength="120" placeholder="例如：家庭照片"></label><p id="folderError" class="form-error"></p><div class="dialog-actions"><button type="button" data-close-dialog class="secondary">取消</button><button type="submit" class="primary">建立資料夾</button></div></form></dialog>
 
   <dialog id="passwordDialog"><form id="passwordForm"><div class="dialog-head"><div><p class="eyebrow green">SECURITY</p><h2>變更密碼</h2></div><button type="button" data-close-dialog class="close" aria-label="關閉">×</button></div><label>目前密碼<input id="currentPassword" type="password" required autocomplete="current-password"></label><label>新密碼<input id="newPassword" type="password" required minlength="8" autocomplete="new-password" placeholder="至少 8 個字元"></label><p id="passwordError" class="form-error"></p><div class="dialog-actions"><button type="button" data-close-dialog class="secondary">取消</button><button type="submit" class="primary">儲存新密碼</button></div></form></dialog>
+
+  <dialog id="deleteDialog" aria-labelledby="deleteDialogTitle"><div class="confirm-content"><div class="dialog-head"><div><p class="eyebrow green">CONFIRM ACTION</p><h2 id="deleteDialogTitle">確認刪除</h2></div><button type="button" data-close-dialog class="close" aria-label="關閉">×</button></div><p id="deleteDialogMessage" class="muted"></p><label id="rememberDeleteRow" class="setting-toggle"><input id="rememberDelete" type="checkbox"> 以後不再詢問</label><div class="dialog-actions"><button id="cancelDeleteButton" type="button" class="secondary">取消</button><button id="confirmDeleteButton" type="button" class="primary">移到垃圾桶</button></div></div></dialog>
 
   <dialog id="userDialog"><form id="userForm"><div class="dialog-head"><div><p class="eyebrow green">ACCESS CONTROL</p><h2 id="userDialogTitle">新增使用者</h2></div><button type="button" data-close-dialog class="close" aria-label="關閉">×</button></div><input id="editingUsername" type="hidden"><div class="form-grid"><label>帳號<input id="userUsername" required pattern="[a-z0-9_-]{3,32}" placeholder="例如：family"></label><label>密碼<input id="userPassword" type="password" minlength="8" placeholder="至少 8 個字元"></label><label>空間配額 (GB)<input id="userQuota" type="number" min="0" step="0.1" value="0"><small>0 表示不限</small></label><label class="toggle-label">管理者<input id="userAdmin" type="checkbox"><span class="toggle"></span></label></div><fieldset><legend>一般權限</legend><label><input id="permRead" type="checkbox" checked> 讀取與下載</label><label><input id="permWrite" type="checkbox" checked> 上傳與建立資料夾</label><label><input id="permDelete" type="checkbox"> 刪除檔案</label></fieldset><label class="setting-toggle"><input id="userUseGlobalGlass" type="checkbox" checked> 使用全域玻璃效果</label><label class="slider-label">個別 Liquid Glass 程度 <output id="userGlassValue">70%</output><input id="userGlass" type="range" min="0" max="100" value="70" disabled></label><p id="userError" class="form-error"></p><div class="dialog-actions"><button type="button" data-close-dialog class="secondary">取消</button><button type="submit" class="primary">儲存使用者</button></div></form></dialog>
 
