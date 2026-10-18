@@ -8,6 +8,7 @@ import (
  "net/url"
  "os"
  "os/exec"
+ "path"
  "path/filepath"
  "runtime"
  "strings"
@@ -17,8 +18,7 @@ import (
 // Legacy Office formats need a converter. It is optional so the base NAS
 // remains small enough for a Raspberry Pi.
 func (a *App) officePreview(w http.ResponseWriter, r *http.Request, u *User) {
- if !u.Admin && !u.Permissions.Read { writeError(w,403,"沒有讀取權限"); return }
- root:=a.userRoot(u.Username)
+ root,owner,ok:=a.readableRoot(w,r,u);if !ok{return}
  full,rel,err:=safePath(root,r.URL.Query().Get("path"))
  if err!=nil || rel=="" { writeError(w,400,"無效的路徑"); return }
  ext:=strings.ToLower(filepath.Ext(full))
@@ -56,6 +56,6 @@ func (a *App) officePreview(w http.ResponseWriter, r *http.Request, u *User) {
  w.Header().Set("Cache-Control","private, no-store")
  w.Header().Set("X-Frame-Options","SAMEORIGIN")
  w.Header().Set("Content-Security-Policy","frame-ancestors 'self'")
- a.audit("activity",u.Username,"預覽舊版 Office 文件",rel)
+ a.audit("activity",u.Username,"預覽舊版 Office 文件",path.Join(owner,rel))
  http.ServeContent(w,r,filepath.Base(converted),pdfInfo.ModTime(),pdf)
 }

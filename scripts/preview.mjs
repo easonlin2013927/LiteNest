@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const root = path.resolve(import.meta.dirname, '..');
 const web = path.join(root, 'web');
@@ -9,8 +10,9 @@ const folders = new Set();
 const files = new Map();
 const trash = new Map();
 let nextTrashID = 1;
-const users = [{ username:'admin', password:'admin', admin:true, permissions:{read:true,write:true,delete:true}, quota_bytes:0, glass_level:null, theme:null, skip_delete_confirm:false, used_bytes:0, created_at:new Date().toISOString() }];
-let settings = {default_permissions:{read:true,write:true,delete:false},default_quota_bytes:0,default_glass_level:70,default_theme:'sage'};
+const users = [{ username:'admin', password:'admin', admin:true, permissions:{read:true,write:true,delete:true,read_others:true,reset_passwords:true}, quota_bytes:0, glass_level:null, theme:null, skip_delete_confirm:false, used_bytes:0, created_at:new Date().toISOString() }];
+let settings = {default_permissions:{read:true,write:true,delete:true,read_others:false,reset_passwords:false},default_quota_bytes:0,default_glass_level:70,default_theme:'sage',login_headline:'把重要檔案，\n安放在自己的家。',login_description:'為小型伺服器與樹莓派打造的輕量私有雲。'};
+const sessions = new Map();
 const globalLog = [];
 const activityLog = [];
 function record(list,actor,action,detail='') { list.unshift({time:new Date().toISOString(),actor,action,detail}); }
@@ -25,7 +27,8 @@ async function body(request) {
   const chunks=[]; for await (const chunk of request) chunks.push(chunk);
   try { return JSON.parse(Buffer.concat(chunks).toString() || '{}'); } catch { return {}; }
 }
-function currentUser(request) { const name=/litenest_preview=([^;]+)/.exec(request.headers.cookie||'')?.[1]; return users.find(user=>user.username===name); }
+function currentUser(request) { const token=/litenest_preview=([^;]+)/.exec(request.headers.cookie||'')?.[1]; return users.find(user=>user.username===sessions.get(token)); }
+function readableOwner(actor,url){const name=url.searchParams.get('owner')||actor.username;const target=users.find(user=>user.username===name);if(!target)return {error:404};if(name===actor.username)return actor.admin||actor.permissions.read?{name}:{error:403};return actor.admin||actor.permissions.read_others&&!target.admin?{name}:{error:403}}
 
 const server=http.createServer(async (request,response)=>{
   const url=new URL(request.url,'http://localhost');
@@ -33,31 +36,37 @@ const server=http.createServer(async (request,response)=>{
     const input=await body(request);
     const account=users.find(user=>user.username===input.username&&user.password===input.password);
     if(!account) return json(response,401,{error:'帳號或密碼錯誤'});
-    response.setHeader('Set-Cookie',`litenest_preview=${account.username}; Path=/; HttpOnly; SameSite=Strict`);
+    const token=randomUUID();sessions.set(token,account.username);response.setHeader('Set-Cookie',`litenest_preview=${token}; Path=/; HttpOnly; SameSite=Strict`);
     record(activityLog,account.username,'登入');
     return json(response,200,publicUser(account));
   }
   if(url.pathname==='/api/health') return json(response,200,{status:'ok',service:'litenest-preview'});
+  if(url.pathname==='/api/appearance') return json(response,200,{login_headline:settings.login_headline,login_description:settings.login_description,default_theme:settings.default_theme});
   const actor=currentUser(request);
   if(url.pathname.startsWith('/api/')&&!actor) return json(response,401,{error:'請先登入'});
   if(url.pathname==='/api/me') return json(response,200,{...publicUser(actor),default_glass_level:settings.default_glass_level,default_theme:settings.default_theme,must_change_password:actor.username==='admin'&&actor.password==='admin'});
-  if(url.pathname==='/api/logout'){record(activityLog,actor.username,'登出');response.setHeader('Set-Cookie','litenest_preview=; Path=/; Max-Age=0');return json(response,204);}
+  if(url.pathname==='/api/logout'){record(activityLog,actor.username,'登出');const token=/litenest_preview=([^;]+)/.exec(request.headers.cookie||'')?.[1];sessions.delete(token);response.setHeader('Set-Cookie','litenest_preview=; Path=/; Max-Age=0');return json(response,204);}
   if(url.pathname==='/api/password'){const input=await body(request);if(input.current_password!==actor.password)return json(response,400,{error:'目前密碼錯誤'});actor.password=input.new_password;record(activityLog,actor.username,'變更密碼');return json(response,204);}
   if(url.pathname==='/api/settings/global'&&request.method==='GET') return actor.admin?json(response,200,settings):json(response,403,{error:'需要管理者權限'});
-  if(url.pathname==='/api/settings/global'&&request.method==='PATCH'){if(!actor.admin)return json(response,403,{error:'需要管理者權限'});settings=await body(request);record(globalLog,actor.username,'更新全域預設設定');return json(response,200,settings);}
+  if(url.pathname==='/api/settings/global'&&request.method==='PATCH'){if(!actor.admin)return json(response,403,{error:'需要管理者權限'});const input=await body(request);if(!['sage','ocean','peach','midnight','forest','plum','lilac','citrus','stone','ember','graphite','berry'].includes(input.default_theme)||String(input.login_headline||'').trim().length<2||String(input.login_description||'').trim().length<2)return json(response,400,{error:'全域設定無效'});settings=input;record(globalLog,actor.username,'更新全域預設設定');return json(response,200,settings);}
   if(url.pathname==='/api/settings/me'&&request.method==='PATCH'){const input=await body(request);if('use_global' in input)actor.glass_level=input.use_global?null:input.glass_level;if('use_global_theme' in input)actor.theme=input.use_global_theme?null:input.theme;if('skip_delete_confirm' in input)actor.skip_delete_confirm=input.skip_delete_confirm;record(activityLog,actor.username,'變更個人顯示設定');return json(response,200,{...publicUser(actor),default_glass_level:settings.default_glass_level,default_theme:settings.default_theme});}
+  if(url.pathname==='/api/accounts'&&request.method==='GET'){if(!actor.admin&&!actor.permissions.read_others&&!actor.permissions.reset_passwords)return json(response,403,{error:'沒有跨帳號權限'});return json(response,200,users.filter(user=>user.username!==actor.username&&(actor.admin||!user.admin)).map(user=>user.username).sort());}
+  if(/^\/api\/users\/[^/]+\/reset-password$/.test(url.pathname)&&request.method==='POST'){if(!actor.admin&&!actor.permissions.reset_passwords)return json(response,403,{error:'沒有重設其他使用者密碼的權限'});const name=decodeURIComponent(url.pathname.split('/')[3]),target=users.find(user=>user.username===name);if(!target)return json(response,404,{error:'使用者不存在'});if(name===actor.username||target.admin&&!actor.admin)return json(response,403,{error:'無法重設此帳號'});const input=await body(request);if(String(input.new_password||'').length<8)return json(response,400,{error:'新密碼至少需要 8 個字元'});target.password=input.new_password;for(const [token,user] of sessions)if(user===name)sessions.delete(token);record(globalLog,actor.username,'重設使用者密碼',name);record(activityLog,actor.username,'重設使用者密碼',name);return json(response,204);}
   if(url.pathname==='/api/logs/global') return actor.admin?json(response,200,globalLog):json(response,403,{error:'需要管理者權限'});
   if(url.pathname==='/api/logs/activity') return json(response,200,actor.admin&&url.searchParams.get('scope')==='all'?activityLog:activityLog.filter(entry=>entry.actor===actor.username));
   if(url.pathname==='/api/files'&&request.method==='GET'){
+    const access=readableOwner(actor,url);if(access.error)return json(response,access.error,{error:'沒有讀取權限'});const owner=access.name;
     const current=url.searchParams.get('path')||'';
-    const ownFolders=[...folders].filter(item=>item.startsWith(`${actor.username}/`)).map(item=>item.slice(actor.username.length+1));
+    const ownFolders=[...folders].filter(item=>item.startsWith(`${owner}/`)).map(item=>item.slice(owner.length+1));
     const items=ownFolders.filter(item=>path.posix.dirname(item)===(current||'.')).map(item=>({name:path.posix.basename(item),path:item,is_dir:true,size:0,modified:new Date().toISOString()}));
-    for(const [key,file] of files) { if(!key.startsWith(`${actor.username}/`))continue; const relative=key.slice(actor.username.length+1); if(path.posix.dirname(relative)===(current||'.'))items.push({name:path.posix.basename(relative),path:relative,is_dir:false,size:file.size,modified:file.modified}); }
+    for(const [key,file] of files) { if(!key.startsWith(`${owner}/`))continue; const relative=key.slice(owner.length+1); if(path.posix.dirname(relative)===(current||'.'))items.push({name:path.posix.basename(relative),path:relative,is_dir:false,size:file.size,modified:file.modified}); }
+    if(owner!==actor.username)record(activityLog,actor.username,'瀏覽其他使用者檔案',`${owner}/${current}`);
     items.sort((a,b)=>Number(b.is_dir)-Number(a.is_dir)||a.name.localeCompare(b.name,'zh-TW'));
     return json(response,200,{path:current,items});
   }
-  if(url.pathname==='/api/folders'&&request.method==='POST'){const input=await body(request);const key=itemKey(actor.username,input.path);if(folders.has(key)||files.has(key))return json(response,409,{error:'同名項目已存在'});folders.add(key);record(activityLog,actor.username,'建立資料夾',input.path);return json(response,201,{path:input.path});}
+  if(url.pathname==='/api/folders'&&request.method==='POST'){if(!actor.admin&&!actor.permissions.write)return json(response,403,{error:'沒有寫入權限'});const input=await body(request);const key=itemKey(actor.username,input.path);if(folders.has(key)||files.has(key))return json(response,409,{error:'同名項目已存在'});folders.add(key);record(activityLog,actor.username,'建立資料夾',input.path);return json(response,201,{path:input.path});}
   if(url.pathname==='/api/upload'&&request.method==='POST'){
+    if(!actor.admin&&!actor.permissions.write)return json(response,403,{error:'沒有寫入權限'});
     const current=url.searchParams.get('path')||'';
     if(current&&!folders.has(itemKey(actor.username,current)))return json(response,400,{error:'目的資料夾不存在'});
     let form;try{form=await new Request('http://localhost/api/upload',{method:'POST',headers:request.headers,body:request,duplex:'half'}).formData();}catch{return json(response,400,{error:'上傳格式無效'});}
@@ -74,12 +83,14 @@ const server=http.createServer(async (request,response)=>{
     return json(response,201,{uploaded});
   }
   if(url.pathname==='/api/download'&&request.method==='GET'){
-    const relative=url.searchParams.get('path')||'';const file=files.get(itemKey(actor.username,relative));
+    const access=readableOwner(actor,url);if(access.error)return json(response,access.error,{error:'沒有讀取權限'});
+    const relative=url.searchParams.get('path')||'';const file=files.get(itemKey(access.name,relative));
     if(!file)return json(response,404,{error:'檔案不存在'});
-    response.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename="${path.posix.basename(relative).replaceAll('"','')}"`});record(activityLog,actor.username,'下載檔案',relative);return response.end(file.data);
+    response.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename="${path.posix.basename(relative).replaceAll('"','')}"`});record(activityLog,actor.username,'下載檔案',`${access.name}/${relative}`);return response.end(file.data);
   }
   if(url.pathname==='/api/preview'&&request.method==='GET'){
-    const relative=url.searchParams.get('path')||'';const file=files.get(itemKey(actor.username,relative));
+    const access=readableOwner(actor,url);if(access.error)return json(response,access.error,{error:'沒有讀取權限'});
+    const relative=url.searchParams.get('path')||'';const file=files.get(itemKey(access.name,relative));
     if(!file)return json(response,404,{error:'檔案不存在'});
     const ext=path.posix.extname(relative).toLowerCase();
     const types={'.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.gif':'image/gif','.webp':'image/webp','.bmp':'image/bmp','.avif':'image/avif','.pdf':'application/pdf','.mp3':'audio/mpeg','.m4a':'audio/mp4','.wav':'audio/wav','.ogg':'audio/ogg','.flac':'audio/flac','.mp4':'video/mp4','.m4v':'video/mp4','.webm':'video/webm','.mov':'video/quicktime','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.ods':'application/vnd.oasis.opendocument.spreadsheet'};
@@ -87,7 +98,7 @@ const server=http.createServer(async (request,response)=>{
     const officeTypes={'.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','.pptx':'application/vnd.openxmlformats-officedocument.presentationml.presentation','.odt':'application/vnd.oasis.opendocument.text','.odp':'application/vnd.oasis.opendocument.presentation'};
     const type=types[ext]||officeTypes[ext]||(textExtensions.has(ext)?'text/plain; charset=utf-8':'application/octet-stream');
     if(!type)return json(response,415,{error:'此格式不支援站內預覽'});
-    record(activityLog,actor.username,'預覽檔案',relative);
+    record(activityLog,actor.username,'預覽檔案',`${access.name}/${relative}`);
     response.writeHead(200,{'Content-Type':type,'Content-Length':file.size,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});return response.end(file.data);
   }
   if(url.pathname==='/api/trash'&&request.method==='GET'){

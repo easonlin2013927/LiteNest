@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCleanRelative(t *testing.T) {
@@ -38,16 +39,18 @@ func TestCleanRelative(t *testing.T) {
 
 func TestThemesAndTrashLifecycle(t *testing.T) {
  app,err:=newApp(t.TempDir());if err!=nil{t.Fatal(err)}
- if !validTheme("sage")||!validTheme("plum")||validTheme("unknown"){t.Fatal("theme allowlist is incorrect")}
+ if !validTheme("sage")||!validTheme("plum")||!validTheme("berry")||validTheme("unknown"){t.Fatal("theme allowlist is incorrect")}
  admin:=&User{Username:"admin",Admin:true}
  global:=httptest.NewRecorder()
- app.updateGlobalSettings(global,httptest.NewRequest(http.MethodPatch,"/api/settings/global",bytes.NewBufferString(`{"default_permissions":{"read":true,"write":true,"delete":false},"default_quota_bytes":0,"default_glass_level":70,"default_theme":"midnight"}`)),admin)
+ app.updateGlobalSettings(global,httptest.NewRequest(http.MethodPatch,"/api/settings/global",bytes.NewBufferString(`{"default_permissions":{"read":true,"write":true,"delete":true},"default_quota_bytes":0,"default_glass_level":70,"default_theme":"midnight","login_headline":"我的私人雲","login_description":"安全存放檔案"}`)),admin)
  if global.Code!=200{t.Fatalf("global theme update failed: %d %s",global.Code,global.Body.String())}
  personal:=httptest.NewRecorder()
  app.updateMySettings(personal,httptest.NewRequest(http.MethodPatch,"/api/settings/me",bytes.NewBufferString(`{"use_global_theme":false,"theme":"peach","skip_delete_confirm":true}`)),admin)
  if personal.Code!=200{t.Fatalf("personal theme update failed: %d %s",personal.Code,personal.Body.String())}
  app.store.mu.RLock();stored:=app.store.data.Users["admin"];theme:=app.store.data.Settings.DefaultTheme;personalTheme:=*stored.Theme;skip:=stored.SkipDeleteConfirm;app.store.mu.RUnlock()
  if theme!="midnight"||personalTheme!="peach"||!skip{t.Fatalf("theme settings not persisted: %s, %s, %v",theme,personalTheme,skip)}
+ appearance:=httptest.NewRecorder();app.publicAppearance(appearance,httptest.NewRequest(http.MethodGet,"/api/appearance",nil))
+ if !bytes.Contains(appearance.Body.Bytes(),[]byte("我的私人雲")){t.Fatalf("public login copy was not updated: %s",appearance.Body.String())}
  root:=app.userRoot("admin")
  original:=filepath.Join(root,"report.pdf")
  if err=os.WriteFile(original,[]byte("report"),0600);err!=nil{t.Fatal(err)}
@@ -86,6 +89,34 @@ func TestTrashRestoreConflictAndIsolation(t *testing.T){
  bob:=&User{Username:"bob",Permissions:Permissions{Read:true,Write:true,Delete:true}}
  isolated:=httptest.NewRecorder();app.restoreTrash(isolated,httptest.NewRequest(http.MethodPost,"/api/trash/restore",bytes.NewReader(payload)),bob)
  if err=json.Unmarshal(isolated.Body.Bytes(),&result);err!=nil||len(result.Failed)!=1{t.Fatalf("cross-user restore was not rejected: %+v, %v",result,err)}
+}
+
+func TestDelegatedAccessAndPasswordReset(t *testing.T){
+ app,err:=newApp(t.TempDir());if err!=nil{t.Fatal(err)}
+ defaults:=app.store.data.Settings.DefaultPermissions
+ if !defaults.Read||!defaults.Write||!defaults.Delete||defaults.ReadOthers||defaults.ResetPasswords{t.Fatalf("unexpected default permissions: %+v",defaults)}
+ hash,salt,err:=hashPassword("old-password");if err!=nil{t.Fatal(err)}
+ bob:=&User{Username:"bob",PasswordHash:hash,Salt:salt,Permissions:Permissions{Read:true,Write:true,Delete:true}}
+ helper:=&User{Username:"helper",Permissions:Permissions{ReadOthers:true,ResetPasswords:true}}
+ app.store.mu.Lock();app.store.data.Users["bob"]=bob;app.store.data.Users["helper"]=helper;app.store.mu.Unlock()
+ if err=os.MkdirAll(app.userRoot("bob"),0750);err!=nil{t.Fatal(err)}
+ if err=os.WriteFile(filepath.Join(app.userRoot("bob"),"private.txt"),[]byte("secret"),0600);err!=nil{t.Fatal(err)}
+ list:=httptest.NewRecorder();app.files(list,httptest.NewRequest(http.MethodGet,"/api/files?owner=bob",nil),helper)
+ if list.Code!=200||!bytes.Contains(list.Body.Bytes(),[]byte("private.txt")){t.Fatalf("delegated list failed: %d %s",list.Code,list.Body.String())}
+ preview:=httptest.NewRecorder();app.previewFile(preview,httptest.NewRequest(http.MethodGet,"/api/preview?owner=bob&path=private.txt",nil),helper)
+ if preview.Code!=200||preview.Body.String()!="secret"{t.Fatalf("delegated preview failed: %d %s",preview.Code,preview.Body.String())}
+ download:=httptest.NewRecorder();app.download(download,httptest.NewRequest(http.MethodGet,"/api/download?owner=bob&path=private.txt",nil),helper)
+ if download.Code!=200||download.Body.String()!="secret"{t.Fatalf("delegated download failed: %d %s",download.Code,download.Body.String())}
+ forbidden:=httptest.NewRecorder();app.files(forbidden,httptest.NewRequest(http.MethodGet,"/api/files?owner=admin",nil),helper)
+ if forbidden.Code!=403{t.Fatalf("delegated user read administrator files: %d",forbidden.Code)}
+ ordinary:=httptest.NewRecorder();app.files(ordinary,httptest.NewRequest(http.MethodGet,"/api/files?owner=bob",nil),&User{Username:"alice",Permissions:Permissions{Read:true}})
+ if ordinary.Code!=403{t.Fatalf("ordinary user read another account: %d",ordinary.Code)}
+ app.sessionM.Lock();app.sessions["bob-session"]=session{Username:"bob",Expires:time.Now().Add(time.Hour)};app.sessionM.Unlock()
+ reset:=httptest.NewRecorder();resetRequest:=httptest.NewRequest(http.MethodPost,"/api/users/bob/reset-password",bytes.NewBufferString(`{"new_password":"new-password"}`));resetRequest.SetPathValue("username","bob");app.resetOtherPassword(reset,resetRequest,helper)
+ if reset.Code!=204||!verifyPassword("new-password",bob){t.Fatalf("delegated password reset failed: %d",reset.Code)}
+ app.sessionM.RLock();_,exists:=app.sessions["bob-session"];app.sessionM.RUnlock();if exists{t.Fatal("password reset left old session active")}
+ blocked:=httptest.NewRecorder();blockedRequest:=httptest.NewRequest(http.MethodPost,"/api/users/admin/reset-password",bytes.NewBufferString(`{"new_password":"new-password"}`));blockedRequest.SetPathValue("username","admin");app.resetOtherPassword(blocked,blockedRequest,helper)
+ if blocked.Code!=403{t.Fatalf("delegated user reset administrator password: %d",blocked.Code)}
 }
 
 func TestCopyUploadQuota(t *testing.T) {

@@ -5,6 +5,7 @@ import (
  "mime"
  "net/http"
  "os"
+ "path"
  "path/filepath"
  "strings"
 )
@@ -40,8 +41,7 @@ func previewType(name string) string {
 }
 
 func (a *App) previewFile(w http.ResponseWriter, r *http.Request, u *User) {
- if !u.Admin && !u.Permissions.Read { writeError(w,403,"沒有讀取權限"); return }
- root:=a.userRoot(u.Username)
+ root,owner,ok:=a.readableRoot(w,r,u);if !ok{return}
  full,rel,err:=safePath(root,r.URL.Query().Get("path"))
  if err!=nil || rel=="" { writeError(w,400,"路徑無效"); return }
  info,err:=os.Lstat(full)
@@ -58,6 +58,6 @@ func (a *App) previewFile(w http.ResponseWriter, r *http.Request, u *User) {
  w.Header().Set("Content-Disposition",mime.FormatMediaType("inline",map[string]string{"filename":info.Name()}))
  w.Header().Set("Cache-Control","private, no-store")
  if contentType=="application/pdf" { w.Header().Set("X-Frame-Options","SAMEORIGIN");w.Header().Set("Content-Security-Policy","frame-ancestors 'self'") }
- a.audit("activity",u.Username,"預覽檔案",rel)
+ a.audit("activity",u.Username,"預覽檔案",path.Join(owner,rel))
  http.ServeContent(w,r,info.Name(),info.ModTime(),file)
 }

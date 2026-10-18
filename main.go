@@ -35,7 +35,7 @@ const (
 //go:embed web/*
 var webAssets embed.FS
 
-type Permissions struct { Read bool `json:"read"`; Write bool `json:"write"`; Delete bool `json:"delete"` }
+type Permissions struct { Read bool `json:"read"`; Write bool `json:"write"`; Delete bool `json:"delete"`; ReadOthers bool `json:"read_others"`; ResetPasswords bool `json:"reset_passwords"` }
 type User struct {
  Username string `json:"username"`
  PasswordHash string `json:"password_hash"`
@@ -48,7 +48,7 @@ type User struct {
  SkipDeleteConfirm bool `json:"skip_delete_confirm,omitempty"`
  CreatedAt time.Time `json:"created_at"`
 }
-type GlobalSettings struct { DefaultPermissions Permissions `json:"default_permissions"`; DefaultQuotaBytes int64 `json:"default_quota_bytes"`; DefaultGlassLevel int `json:"default_glass_level"`; DefaultTheme string `json:"default_theme"` }
+type GlobalSettings struct { DefaultPermissions Permissions `json:"default_permissions"`; DefaultQuotaBytes int64 `json:"default_quota_bytes"`; DefaultGlassLevel int `json:"default_glass_level"`; DefaultTheme string `json:"default_theme"`; LoginHeadline string `json:"login_headline"`; LoginDescription string `json:"login_description"` }
 type configFile struct { Version int `json:"version"`; Users map[string]*User `json:"users"`; Settings GlobalSettings `json:"settings"` }
 type Store struct { mu sync.RWMutex; path string; data configFile }
 type session struct { Username string; Expires time.Time }
@@ -77,12 +77,12 @@ func newApp(dataDir string) (*App,error) {
 }
 
 func loadStore(filename string)(*Store,error){
- s:=&Store{path:filename,data:configFile{Version:2,Users:map[string]*User{},Settings:defaultGlobalSettings()}}
+ s:=&Store{path:filename,data:configFile{Version:3,Users:map[string]*User{},Settings:defaultGlobalSettings()}}
  raw,err:=os.ReadFile(filename)
- if err==nil { if err=json.Unmarshal(raw,&s.data);err!=nil{return nil,fmt.Errorf("read config: %w",err)}; if s.data.Users==nil{s.data.Users=map[string]*User{}}; changed:=false; if s.data.Version<2{s.data.Settings=defaultGlobalSettings();s.data.Version=2;changed=true}; if !validTheme(s.data.Settings.DefaultTheme){s.data.Settings.DefaultTheme="sage";changed=true};if changed{if err=s.saveLocked();err!=nil{return nil,err}}; return s,nil }
+ if err==nil { if err=json.Unmarshal(raw,&s.data);err!=nil{return nil,fmt.Errorf("read config: %w",err)}; if s.data.Users==nil{s.data.Users=map[string]*User{}}; changed:=false; if s.data.Version<2{s.data.Settings=defaultGlobalSettings();s.data.Version=2;changed=true};if s.data.Version<3{s.data.Settings.DefaultPermissions.Delete=true;s.data.Version=3;changed=true}; if !validTheme(s.data.Settings.DefaultTheme){s.data.Settings.DefaultTheme="sage";changed=true};if s.data.Settings.LoginHeadline==""{s.data.Settings.LoginHeadline=defaultLoginHeadline;changed=true};if s.data.Settings.LoginDescription==""{s.data.Settings.LoginDescription=defaultLoginDescription;changed=true};if changed{if err=s.saveLocked();err!=nil{return nil,err}}; return s,nil }
  if !errors.Is(err,os.ErrNotExist){return nil,err}
  hash,salt,err:=hashPassword("admin");if err!=nil{return nil,err}
- s.data.Users["admin"]=&User{Username:"admin",PasswordHash:hash,Salt:salt,Admin:true,Permissions:Permissions{true,true,true},CreatedAt:time.Now().UTC()}
+ s.data.Users["admin"]=&User{Username:"admin",PasswordHash:hash,Salt:salt,Admin:true,Permissions:Permissions{Read:true,Write:true,Delete:true,ReadOthers:true,ResetPasswords:true},CreatedAt:time.Now().UTC()}
  if err=s.saveLocked();err!=nil{return nil,err}; log.Print("created default account admin/admin; change it after first login");return s,nil
 }
 func(s *Store)saveLocked()error{raw,err:=json.MarshalIndent(s.data,"","  ");if err!=nil{return err};tmp:=s.path+".tmp";if err=os.WriteFile(tmp,raw,0600);err!=nil{return err};return os.Rename(tmp,s.path)}
@@ -93,10 +93,11 @@ func deriveKey(password,salt []byte)[]byte{block:=make([]byte,len(salt)+4);copy(
 
 func(a *App)routes()http.Handler{
  mux:=http.NewServeMux()
- mux.HandleFunc("POST /api/login",a.login);mux.HandleFunc("POST /api/logout",a.withAuth(a.logout));mux.HandleFunc("GET /api/me",a.withAuth(a.me));mux.HandleFunc("POST /api/password",a.withAuth(a.changePassword))
+ mux.HandleFunc("POST /api/login",a.login);mux.HandleFunc("POST /api/logout",a.withAuth(a.logout));mux.HandleFunc("GET /api/me",a.withAuth(a.me));mux.HandleFunc("POST /api/password",a.withAuth(a.changePassword));mux.HandleFunc("GET /api/appearance",a.publicAppearance)
  mux.HandleFunc("GET /api/files",a.withAuth(a.files));mux.HandleFunc("POST /api/folders",a.withAuth(a.createFolder));mux.HandleFunc("POST /api/upload",a.withAuth(a.upload));mux.HandleFunc("GET /api/download",a.withAuth(a.download));mux.HandleFunc("GET /api/preview",a.withAuth(a.previewFile));mux.HandleFunc("GET /api/office-preview",a.withAuth(a.officePreview));mux.HandleFunc("DELETE /api/files",a.withAuth(a.deleteFile))
  mux.HandleFunc("GET /api/trash",a.withAuth(a.listTrash));mux.HandleFunc("POST /api/trash/restore",a.withAuth(a.restoreTrash));mux.HandleFunc("DELETE /api/trash",a.withAuth(a.purgeTrash))
  mux.HandleFunc("GET /api/users",a.withAdmin(a.listUsers));mux.HandleFunc("POST /api/users",a.withAdmin(a.createUser));mux.HandleFunc("PATCH /api/users/{username}",a.withAdmin(a.updateUser));mux.HandleFunc("DELETE /api/users/{username}",a.withAdmin(a.deleteUser));mux.HandleFunc("GET /api/health",a.health)
+ mux.HandleFunc("GET /api/accounts",a.withAuth(a.accessibleAccounts));mux.HandleFunc("POST /api/users/{username}/reset-password",a.withAuth(a.resetOtherPassword))
  mux.HandleFunc("GET /api/settings/global",a.withAdmin(a.getGlobalSettings));mux.HandleFunc("PATCH /api/settings/global",a.withAdmin(a.updateGlobalSettings));mux.HandleFunc("PATCH /api/settings/me",a.withAuth(a.updateMySettings))
  mux.HandleFunc("GET /api/logs/global",a.withAdmin(a.globalLogs));mux.HandleFunc("GET /api/logs/activity",a.withAuth(a.activityLogs))
  static,_:=fs.Sub(webAssets,"web");mux.Handle("/",http.FileServer(http.FS(static)));return securityHeaders(mux)
@@ -116,7 +117,7 @@ func(a *App)userRoot(name string)string{return filepath.Join(a.dataDir,"users",n
 func cleanRelative(raw string)(string,error){raw=strings.ReplaceAll(strings.TrimSpace(raw),"\\","/");for _,part:=range strings.Split(raw,"/"){if part==".."||strings.ContainsRune(part,0){return "",errors.New("invalid path")}};clean:=strings.TrimPrefix(path.Clean("/"+raw),"/");if clean=="."{return "",nil};return clean,nil}
 func safePath(root,raw string)(string,string,error){rel,err:=cleanRelative(raw);if err!=nil{return "","",err};full:=filepath.Join(root,filepath.FromSlash(rel));check,err:=filepath.Rel(root,full);if err!=nil||check==".."||strings.HasPrefix(check,".."+string(filepath.Separator)){return "","",errors.New("unsafe path")};return full,rel,nil}
 
-func(a *App)files(w http.ResponseWriter,r *http.Request,u *User){if !u.Admin&&!u.Permissions.Read{writeError(w,403,"沒有讀取權限");return};full,rel,err:=safePath(a.userRoot(u.Username),r.URL.Query().Get("path"));if err!=nil{writeError(w,400,"路徑無效");return};entries,err:=os.ReadDir(full);if err!=nil{if errors.Is(err,os.ErrNotExist){writeError(w,404,"資料夾不存在")}else{writeError(w,500,"無法讀取資料夾")};return};items:=make([]fileInfo,0,len(entries));for _,entry:=range entries{info,err:=entry.Info();if err!=nil||info.Mode()&os.ModeSymlink!=0{continue};p:=entry.Name();if rel!=""{p=path.Join(rel,p)};items=append(items,fileInfo{entry.Name(),p,entry.IsDir(),info.Size(),info.ModTime()})};sort.Slice(items,func(i,j int)bool{if items[i].IsDir!=items[j].IsDir{return items[i].IsDir};return strings.ToLower(items[i].Name)<strings.ToLower(items[j].Name)});writeJSON(w,200,map[string]any{"path":rel,"items":items})}
+func(a *App)files(w http.ResponseWriter,r *http.Request,u *User){root,owner,ok:=a.readableRoot(w,r,u);if !ok{return};full,rel,err:=safePath(root,r.URL.Query().Get("path"));if err!=nil{writeError(w,400,"路徑無效");return};if !withinStorage(root,full){writeError(w,403,"路徑不在儲存空間內");return};entries,err:=os.ReadDir(full);if err!=nil{if errors.Is(err,os.ErrNotExist){writeError(w,404,"資料夾不存在")}else{writeError(w,500,"無法讀取資料夾")};return};items:=make([]fileInfo,0,len(entries));for _,entry:=range entries{info,err:=entry.Info();if err!=nil||info.Mode()&os.ModeSymlink!=0{continue};p:=entry.Name();if rel!=""{p=path.Join(rel,p)};items=append(items,fileInfo{entry.Name(),p,entry.IsDir(),info.Size(),info.ModTime()})};sort.Slice(items,func(i,j int)bool{if items[i].IsDir!=items[j].IsDir{return items[i].IsDir};return strings.ToLower(items[i].Name)<strings.ToLower(items[j].Name)});if owner!=u.Username{a.audit("activity",u.Username,"瀏覽其他使用者檔案",path.Join(owner,rel))};writeJSON(w,200,map[string]any{"path":rel,"items":items})}
 func(a *App)createFolder(w http.ResponseWriter,r *http.Request,u *User){if !u.Admin&&!u.Permissions.Write{writeError(w,403,"沒有寫入權限");return};var in struct{Path string `json:"path"`};if !decodeJSON(w,r,&in){return};full,rel,err:=safePath(a.userRoot(u.Username),in.Path);if err!=nil||rel==""{writeError(w,400,"資料夾名稱無效");return};if err=os.Mkdir(full,0750);err!=nil{if errors.Is(err,os.ErrExist){writeError(w,409,"同名項目已存在")}else{writeError(w,400,"無法建立資料夾")};return};a.audit("activity",u.Username,"建立資料夾",rel);writeJSON(w,201,map[string]string{"path":rel})}
 
 var errQuota=errors.New("quota exceeded")
@@ -132,7 +133,7 @@ func(a *App)upload(w http.ResponseWriter,r *http.Request,u *User){
  if len(uploaded)==0{writeError(w,400,"沒有選擇檔案");return};for _,name:=range uploaded{a.audit("activity",u.Username,"上傳檔案",path.Join(r.URL.Query().Get("path"),name))};writeJSON(w,201,map[string]any{"uploaded":uploaded})
 }
 
-func(a *App)download(w http.ResponseWriter,r *http.Request,u *User){if !u.Admin&&!u.Permissions.Read{writeError(w,403,"沒有讀取權限");return};full,_,err:=safePath(a.userRoot(u.Username),r.URL.Query().Get("path"));if err!=nil{writeError(w,400,"路徑無效");return};info,err:=os.Stat(full);if err!=nil||info.IsDir()||info.Mode()&os.ModeSymlink!=0{writeError(w,404,"檔案不存在");return};w.Header().Set("Content-Disposition",fmt.Sprintf("attachment; filename=%q",info.Name()));a.audit("activity",u.Username,"下載檔案",r.URL.Query().Get("path"));http.ServeFile(w,r,full)}
+func(a *App)download(w http.ResponseWriter,r *http.Request,u *User){root,owner,ok:=a.readableRoot(w,r,u);if !ok{return};full,rel,err:=safePath(root,r.URL.Query().Get("path"));if err!=nil||rel==""{writeError(w,400,"路徑無效");return};info,err:=os.Lstat(full);if err!=nil||!info.Mode().IsRegular(){writeError(w,404,"檔案不存在");return};if !withinStorage(root,full){writeError(w,403,"檔案不在儲存空間內");return};w.Header().Set("Content-Disposition",fmt.Sprintf("attachment; filename=%q",info.Name()));a.audit("activity",u.Username,"下載檔案",path.Join(owner,rel));http.ServeFile(w,r,full)}
 
 func(a *App)listUsers(w http.ResponseWriter,_ *http.Request,_ *User){a.store.mu.RLock();users:=make([]map[string]any,0,len(a.store.data.Users));for _,u:=range a.store.data.Users{item:=publicUser(u);used,_:=a.userUsage(u.Username);item["used_bytes"]=used;users=append(users,item)};a.store.mu.RUnlock();sort.Slice(users,func(i,j int)bool{return users[i]["username"].(string)<users[j]["username"].(string)});writeJSON(w,200,users)}
 func validUsername(v string)bool{if len(v)<3||len(v)>32{return false};for _,c:=range v{if !(c>='a'&&c<='z'||c>='0'&&c<='9'||c=='-'||c=='_'){return false}};return true}
@@ -150,7 +151,7 @@ func(a *App)createUser(w http.ResponseWriter,r *http.Request,actor *User){
  created:=&User{Username:in.Username,PasswordHash:hash,Salt:salt,Admin:in.Admin,Permissions:defaults.DefaultPermissions,QuotaBytes:defaults.DefaultQuotaBytes,GlassLevel:in.GlassLevel,CreatedAt:time.Now().UTC()}
  if in.Permissions!=nil{created.Permissions=*in.Permissions}
  if in.QuotaBytes!=nil{created.QuotaBytes=*in.QuotaBytes}
- if created.Admin{created.Permissions=Permissions{true,true,true}}
+ if created.Admin{created.Permissions=Permissions{Read:true,Write:true,Delete:true,ReadOthers:true,ResetPasswords:true}}
  a.store.data.Users[in.Username]=created
  if err=a.store.saveLocked();err!=nil{delete(a.store.data.Users,in.Username);a.store.mu.Unlock();writeError(w,500,"無法儲存設定");return}
  a.store.mu.Unlock()
@@ -173,7 +174,7 @@ func(a *App)updateUser(w http.ResponseWriter,r *http.Request,actor *User){
  if in.Password!=""{hash,salt,err:=hashPassword(in.Password);if err!=nil{a.store.mu.Unlock();writeError(w,500,"無法更新密碼");return};target.PasswordHash,target.Salt=hash,salt}
  if in.Admin!=nil{target.Admin=*in.Admin}
  if in.Permissions!=nil{target.Permissions=*in.Permissions}
- if target.Admin{target.Permissions=Permissions{true,true,true}}
+ if target.Admin{target.Permissions=Permissions{Read:true,Write:true,Delete:true,ReadOthers:true,ResetPasswords:true}}
  if in.QuotaBytes!=nil{target.QuotaBytes=*in.QuotaBytes}
  if in.UseGlobalGlass{target.GlassLevel=nil}else if in.GlassLevel!=nil{level:=*in.GlassLevel;target.GlassLevel=&level}
  if err:=a.store.saveLocked();err!=nil{*target=original;a.store.mu.Unlock();writeError(w,500,"無法儲存設定");return}

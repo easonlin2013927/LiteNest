@@ -8,12 +8,17 @@ import (
  "net/http"
  "os"
  "path/filepath"
+ "strings"
  "time"
 )
 
-func defaultGlobalSettings() GlobalSettings { return GlobalSettings{DefaultPermissions:Permissions{Read:true,Write:true},DefaultGlassLevel:70,DefaultTheme:"sage"} }
+const defaultLoginHeadline = "把重要檔案，\n安放在自己的家。"
+const defaultLoginDescription = "為小型伺服器與樹莓派打造的輕量私有雲。"
+func defaultGlobalSettings() GlobalSettings { return GlobalSettings{DefaultPermissions:Permissions{Read:true,Write:true,Delete:true},DefaultGlassLevel:70,DefaultTheme:"sage",LoginHeadline:defaultLoginHeadline,LoginDescription:defaultLoginDescription} }
 func validGlass(level int) bool { return level>=0 && level<=100 }
-func validTheme(name string) bool { switch name {case "sage","ocean","peach","midnight","forest","plum":return true};return false }
+func validTheme(name string) bool { switch name {case "sage","ocean","peach","midnight","forest","plum","lilac","citrus","stone","ember","graphite","berry":return true};return false }
+
+func(a *App)publicAppearance(w http.ResponseWriter,_ *http.Request){a.store.mu.RLock();settings:=a.store.data.Settings;a.store.mu.RUnlock();writeJSON(w,200,map[string]string{"login_headline":settings.LoginHeadline,"login_description":settings.LoginDescription,"default_theme":settings.DefaultTheme})}
 
 func(a *App)getGlobalSettings(w http.ResponseWriter,_ *http.Request,_ *User){
  a.store.mu.RLock();settings:=a.store.data.Settings;a.store.mu.RUnlock();writeJSON(w,200,settings)
@@ -22,6 +27,8 @@ func(a *App)updateGlobalSettings(w http.ResponseWriter,r *http.Request,actor *Us
  var settings GlobalSettings
  if !decodeJSON(w,r,&settings){return}
  if !validGlass(settings.DefaultGlassLevel)||settings.DefaultQuotaBytes<0||!validTheme(settings.DefaultTheme) {writeError(w,400,"玻璃效果、配額或介面風格無效");return}
+ settings.LoginHeadline=strings.TrimSpace(settings.LoginHeadline);settings.LoginDescription=strings.TrimSpace(settings.LoginDescription)
+ if len([]rune(settings.LoginHeadline))<2||len([]rune(settings.LoginHeadline))>70||len([]rune(settings.LoginDescription))<2||len([]rune(settings.LoginDescription))>140{writeError(w,400,"登入頁文字長度無效");return}
  a.store.mu.Lock();old:=a.store.data.Settings;a.store.data.Settings=settings
  if err:=a.store.saveLocked();err!=nil{a.store.data.Settings=old;a.store.mu.Unlock();writeError(w,500,"無法儲存設定");return}
  a.store.mu.Unlock();a.audit("global",actor.Username,"更新全域預設設定","")
